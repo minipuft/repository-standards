@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Downstream preset: upstream release sync owns claude-prompts; publishing tools remain manual",
   "extends": [
-    "github>minipuft/repository-standards//renovate/default.json#1.0.0"
+    "github>minipuft/repository-standards//renovate/default.json#v1.0.0"
   ],
   "ignoreDeps": ["claude-prompts"],
   "packageRules": [

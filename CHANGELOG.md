@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Correct the internal Renovate preset reference to the immutable `v1.0.0` tag.
+
 ## 1.0.0
 
 - Add downstream contract schema and marketplace, node-consumer, and npm-publisher profiles.
