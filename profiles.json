@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "marketplace": {
+      "packageManager": null,
+      "requiredChecks": ["Consumer Contract"],
+      "capabilities": ["marketplace-metadata"]
+    },
+    "node-consumer": {
+      "packageManager": "npm",
+      "nodeMajor": "24",
+      "requiredChecks": ["Consumer Contract"],
+      "capabilities": ["frozen-install", "installed-package-inventory"]
+    },
+    "npm-publisher": {
+      "packageManager": "npm",
+      "nodeMajor": "24",
+      "requiredChecks": ["Consumer Contract"],
+      "capabilities": [
+        "frozen-install",
+        "installed-package-inventory",
+        "package-budgets",
+        "trusted-publisher"
+      ]
+    }
+  }
+}

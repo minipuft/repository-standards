@@ -1,0 +1,46 @@
+name: Consumer Contract
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        description: Registered downstream profile
+        type: string
+        required: true
+      contract-path:
+        description: Contract path relative to the consumer checkout
+        type: string
+        required: false
+        default: downstream-contract.json
+      standards-ref:
+        description: Immutable repository-standards commit SHA matching this workflow reference
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  consumer-contract:
+    name: Consumer Contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out consumer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: consumer
+      - name: Check out immutable standards
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: minipuft/repository-standards
+          ref: ${{ inputs.standards-ref }}
+          path: standards
+          persist-credentials: false
+      - name: Verify consumer contract
+        uses: ./standards/actions/verify-consumer
+        with:
+          profile: ${{ inputs.profile }}
+          contract-path: ${{ inputs.contract-path }}
+          workspace: consumer

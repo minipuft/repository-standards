@@ -1,0 +1,7 @@
+# Changelog
+
+## 1.0.0
+
+- Add downstream contract schema and marketplace, node-consumer, and npm-publisher profiles.
+- Add a read-only reusable consumer workflow and exact installed-artifact verification.
+- Add shareable base/downstream Renovate presets with sole-writer policy.

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Downstream preset: upstream release sync owns claude-prompts; publishing tools remain manual",
+  "extends": [
+    "github>minipuft/repository-standards//renovate/default.json#1.0.0"
+  ],
+  "ignoreDeps": ["claude-prompts"],
+  "packageRules": [
+    {
+      "description": "Publishing, build, and developer-hook tools require manual review",
+      "matchPackageNames": [
+        "typescript",
+        "ts-jest",
+        "jest",
+        "@types/jest",
+        "esbuild",
+        "husky",
+        "lint-staged",
+        "bun",
+        "@types/bun"
+      ],
+      "groupName": "Build and publishing tools",
+      "automerge": false
+    }
+  ]
+}
