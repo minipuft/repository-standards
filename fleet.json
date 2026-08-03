@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "minipuft/claude-prompts",
+    "packagePath": "server/package.json",
+    "releaseWorkflowPath": ".github/workflows/extension-publish.yml"
+  },
+  "repositories": [
+    {
+      "repository": "minipuft/gemini-prompts",
+      "profile": "node-consumer",
+      "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
+      "requiredChecks": ["validate", "Consumer Contract / Consumer Contract"],
+      "nodeMajor": "24",
+      "claudePromptsWriter": "claude-prompts-release-sync",
+      "mergeMode": "auto",
+      "renovatePresetVersion": "v1.0.1",
+      "dependencyAutomation": "migrating"
+    },
+    {
+      "repository": "minipuft/opencode-prompts",
+      "profile": "npm-publisher",
+      "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
+      "requiredChecks": [
+        "validate",
+        "validate-plugin",
+        "Consumer Contract / Consumer Contract"
+      ],
+      "nodeMajor": "24",
+      "claudePromptsWriter": "claude-prompts-release-sync",
+      "mergeMode": "auto",
+      "renovatePresetVersion": "v1.0.1",
+      "dependencyAutomation": "migrating"
+    },
+    {
+      "repository": "minipuft/minipuft-plugins",
+      "profile": "marketplace",
+      "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
+      "requiredChecks": ["Consumer Contract / Consumer Contract"],
+      "nodeMajor": null,
+      "claudePromptsWriter": "claude-prompts-release-sync",
+      "mergeMode": "auto",
+      "renovatePresetVersion": null,
+      "dependencyAutomation": "none"
+    }
+  ]
+}

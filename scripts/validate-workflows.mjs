@@ -5,6 +5,7 @@ import { parse } from "yaml";
 const files = [
   ".github/workflows/ci.yml",
   ".github/workflows/consumer-contract.yml",
+  ".github/workflows/fleet-drift-audit.yml",
   "actions/verify-consumer/action.yml",
 ];
 const violations = [];

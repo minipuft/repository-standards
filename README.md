@@ -9,6 +9,7 @@ Versioned consumer contracts, reusable validation, dependency policy, and read-o
 - `actions/verify-consumer`: canonical executable verifier.
 - `.github/workflows/consumer-contract.yml`: canonical read-only reusable workflow.
 - `renovate/*.json`: canonical shareable Renovate presets.
+- `fleet.json` and `scripts/audit-fleet.mjs`: canonical read-only drift inventory and audit.
 - Product-specific build, symlink, plugin, and release behavior remains local to each consumer.
 
 Consumers pin both the reusable workflow and its `standards-ref` input to the same immutable commit SHA:
@@ -37,6 +38,7 @@ npm run validate:workflows
 npm run validate:renovate
 npm run format:check
 npm run validate
+npm run audit:fleet
 ```
 
 ## Contract boundaries
@@ -50,3 +52,5 @@ The `claude-prompts` product version has one writer: `claude-prompts-release-syn
 Tags are immutable. Contract-breaking changes require a new major. Compatible validation additions require a minor; fixes require a patch. If a release is defective, publish a new tag and update each caller by PR rather than moving an existing tag.
 
 Remove a required context before reverting the workflow that emits it. Do not restore competing product-version writers as rollback.
+
+The scheduled fleet audit may read public files without a secret. Reading branch-protection metadata across repositories typically requires a fine-grained `FLEET_AUDIT_TOKEN` with read-only Administration access to the registered repositories. The audit token is never used for mutation; the repository-scoped `github.token` updates only the standards dashboard issue.

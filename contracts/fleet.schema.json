@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/minipuft/repository-standards/contracts/fleet.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "upstream", "repositories"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "packagePath", "releaseWorkflowPath"],
+      "properties": {
+        "repository": { "$ref": "#/definitions/repository" },
+        "packagePath": { "type": "string", "minLength": 1 },
+        "releaseWorkflowPath": { "type": "string", "minLength": 1 }
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repository",
+          "profile",
+          "standardsRef",
+          "requiredChecks",
+          "nodeMajor",
+          "claudePromptsWriter",
+          "mergeMode",
+          "renovatePresetVersion",
+          "dependencyAutomation"
+        ],
+        "properties": {
+          "repository": { "$ref": "#/definitions/repository" },
+          "profile": {
+            "enum": ["marketplace", "node-consumer", "npm-publisher"]
+          },
+          "standardsRef": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "requiredChecks": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "nodeMajor": { "type": ["string", "null"], "pattern": "^\\d+$" },
+          "claudePromptsWriter": { "const": "claude-prompts-release-sync" },
+          "mergeMode": { "const": "auto" },
+          "renovatePresetVersion": {
+            "type": ["string", "null"],
+            "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+          },
+          "dependencyAutomation": { "enum": ["none", "migrating", "renovate"] }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" }
+  }
+}

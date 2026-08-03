@@ -1,0 +1,45 @@
+name: Fleet Drift Audit
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    name: Fleet Drift Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: Audit public fleet state
+        id: audit
+        continue-on-error: true
+        env:
+          FLEET_AUDIT_TOKEN: ${{ secrets.FLEET_AUDIT_TOKEN }}
+        run: node scripts/audit-fleet.mjs --output fleet-report.md
+      - name: Update drift dashboard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title="Fleet Drift Dashboard"
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/issues" -f state=open --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)
+          if [[ -n "$issue" ]]; then
+            jq -Rs '{body: .}' fleet-report.md |
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$issue" --input - >/dev/null
+          else
+            jq -Rs --arg title "$title" '{title: $title, body: .}' fleet-report.md |
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues" --input - >/dev/null
+          fi
+      - name: Enforce audit result
+        if: steps.audit.outcome != 'success'
+        run: exit 1

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0
+
+- Add a versioned fleet inventory and deterministic read-only drift audit.
+- Add a weekly dashboard workflow with explicit cross-repository read credentials.
+
 ## 1.0.1
 
 - Correct the internal Renovate preset reference to the immutable `v1.0.0` tag.
