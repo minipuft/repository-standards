@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/minipuft/repository-standards/contracts/downstream-contract.schema.json",
+  "title": "Minipuft downstream contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "profile",
+    "upstreamPackage",
+    "upstreamWriter",
+    "requiredPaths",
+    "requiredChecks",
+    "localValidationWorkflow"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "profile": {
+      "enum": ["marketplace", "node-consumer", "npm-publisher"]
+    },
+    "nodeVersionFile": { "const": ".node-version" },
+    "packageManager": { "const": "npm" },
+    "upstreamPackage": { "const": "claude-prompts" },
+    "upstreamWriter": { "const": "claude-prompts-release-sync" },
+    "requiredPaths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/repositoryPath" }
+    },
+    "requiredChecks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "localValidationWorkflow": { "$ref": "#/definitions/repositoryPath" },
+    "marketplace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestPath",
+        "pluginName",
+        "sourceUrl",
+        "sourceRef",
+        "license"
+      ],
+      "properties": {
+        "manifestPath": { "$ref": "#/definitions/repositoryPath" },
+        "pluginName": { "type": "string", "minLength": 1 },
+        "sourceUrl": { "type": "string", "pattern": "^https://github\\.com/" },
+        "sourceRef": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 }
+      }
+    },
+    "publish": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageName",
+        "requiresTrustedPublisher",
+        "packedSizeBudgetBytes",
+        "unpackedSizeBudgetBytes"
+      ],
+      "properties": {
+        "packageName": { "type": "string", "minLength": 1 },
+        "requiresTrustedPublisher": { "const": true },
+        "packedSizeBudgetBytes": { "type": "integer", "minimum": 1 },
+        "unpackedSizeBudgetBytes": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "definitions": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(?:/|.*(?:^|/)\\.\\.(?:/|$))" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "profile": { "const": "marketplace" } } },
+      "then": {
+        "properties": { "marketplace": {} },
+        "required": ["marketplace"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile": { "enum": ["node-consumer", "npm-publisher"] }
+        }
+      },
+      "then": {
+        "properties": { "nodeVersionFile": {}, "packageManager": {} },
+        "required": ["nodeVersionFile", "packageManager"]
+      }
+    },
+    {
+      "if": { "properties": { "profile": { "const": "npm-publisher" } } },
+      "then": {
+        "properties": { "publish": {} },
+        "required": ["publish"]
+      }
+    }
+  ]
+}

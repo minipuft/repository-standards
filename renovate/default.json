@@ -1,0 +1,67 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared fail-closed dependency policy for minipuft repositories",
+  "extends": [
+    "config:recommended",
+    ":configMigration",
+    "helpers:pinGitHubActionDigests",
+    "abandonments:recommended",
+    ":preserveSemverRanges",
+    ":maintainLockFilesWeekly"
+  ],
+  "timezone": "UTC",
+  "baseBranchPatterns": ["main"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "prCreation": "not-pending",
+  "schedule": ["* 0-5 * * 1"],
+  "platformAutomerge": false,
+  "automerge": false,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "dependencyDashboard": true,
+  "dependencyDashboardApproval": false,
+  "dependencyDashboardTitle": "📦 Dependency Updates Dashboard",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* 0-5 * * 1"],
+    "automerge": true,
+    "commitMessageAction": "refresh"
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": false,
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null,
+    "addLabels": ["security", "vulnerability"]
+  },
+  "packageRules": [
+    {
+      "description": "Stable nonmajor development updates may merge after a 14-day soak",
+      "matchDepTypes": ["devDependencies"],
+      "matchCurrentVersion": "!/^0/",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "minimumReleaseAge": "14 days",
+      "automerge": true
+    },
+    {
+      "description": "Major updates require manual review",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "reviewers": ["minipuft"],
+      "automerge": false
+    },
+    {
+      "description": "GitHub Actions form one executable supply-chain boundary",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "automerge": false
+    }
+  ]
+}
