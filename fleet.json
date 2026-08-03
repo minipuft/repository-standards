@@ -15,7 +15,7 @@
       "claudePromptsWriter": "claude-prompts-release-sync",
       "mergeMode": "auto",
       "renovatePresetVersion": "v1.0.1",
-      "dependencyAutomation": "migrating"
+      "dependencyAutomation": "renovate"
     },
     {
       "repository": "minipuft/opencode-prompts",
@@ -30,7 +30,7 @@
       "claudePromptsWriter": "claude-prompts-release-sync",
       "mergeMode": "auto",
       "renovatePresetVersion": "v1.0.1",
-      "dependencyAutomation": "migrating"
+      "dependencyAutomation": "renovate"
     },
     {
       "repository": "minipuft/minipuft-plugins",

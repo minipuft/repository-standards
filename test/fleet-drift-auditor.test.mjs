@@ -102,8 +102,8 @@ for (const [name, repository, mutate, expected] of [
 }
 
 test("canonical Renovate rejects a remaining Dependabot config", () => {
-  const canonicalFleet = structuredClone(fleet);
-  canonicalFleet.repositories[0].dependencyAutomation = "renovate";
-  const audit = auditFleet(canonicalFleet, healthySnapshots());
+  const snapshots = healthySnapshots();
+  snapshots.repositories["minipuft/gemini-prompts"].dependabotPresent = true;
+  const audit = auditFleet(fleet, snapshots);
   assert.match(formatFleetReport(audit), /legacy Dependabot config remains/);
 });
