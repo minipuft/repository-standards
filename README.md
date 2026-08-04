@@ -10,6 +10,7 @@ Versioned consumer contracts, reusable validation, dependency policy, and read-o
 - `.github/workflows/consumer-contract.yml`: canonical read-only reusable workflow.
 - `renovate/*.json`: canonical shareable Renovate presets.
 - `fleet.json` and `scripts/audit-fleet.mjs`: canonical read-only drift inventory and audit.
+- `conventions/plan-frontmatter.md`: canonical plan frontmatter schema, status vocabulary, and retirement contract.
 - Product-specific build, symlink, plugin, and release behavior remains local to each consumer.
 
 Consumers pin both the reusable workflow and its `standards-ref` input to the same immutable commit SHA:
