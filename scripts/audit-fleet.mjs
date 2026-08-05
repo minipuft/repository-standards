@@ -48,6 +48,21 @@ function mergeModes(source, repositories) {
   return modes;
 }
 
+// The check-runs endpoint accepts a branch ref and defaults to filter=latest, which collapses
+// re-runs to one entry per check name — the same state branch protection gates on. Check-run
+// names match protection contexts exactly (e.g. "Consumer Contract / Consumer Contract"), so
+// the result joins directly against fleet.json requiredChecks with no name mapping.
+async function checkOutcomes(repository) {
+  const payload = JSON.parse(
+    await request(
+      `https://api.github.com/repos/${repository}/commits/main/check-runs?per_page=100`,
+    ),
+  );
+  return Object.fromEntries(
+    (payload.check_runs ?? []).map((run) => [run.name, run.conclusion]),
+  );
+}
+
 async function repositorySnapshot(entry, mergeMode) {
   const contract = JSON.parse(
     await raw(entry.repository, "downstream-contract.json"),
@@ -65,6 +80,7 @@ async function repositorySnapshot(entry, mergeMode) {
     contract,
     caller,
     protectionChecks: protection.required_status_checks?.contexts ?? [],
+    checkOutcomes: await checkOutcomes(entry.repository),
     mergeMode,
     dependabotPresent:
       (await request(

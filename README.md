@@ -91,6 +91,21 @@ The shared verifier performs a frozen, script-disabled npm install and validates
 
 The `claude-prompts` product version has one writer: `claude-prompts-release-sync`. Downstream Renovate configurations extend the tagged `downstream` preset, which ignores that dependency.
 
+## What the fleet audit counts as drift
+
+The audit separates two questions that are easy to conflate. Branch protection answers whether a
+check is **required**; the check-runs on `main` answer whether it **passed**. Both are read.
+
+| Observed on `main` HEAD                                                                  | Classification                                                                                    |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Required check concluded `failure`, `timed_out`, `action_required`, or `startup_failure` | **Drift** — the audit fails. A red required check blocks every sync PR                            |
+| Non-required check failing                                                               | Note — reported, does not fail the audit; surfaces broken release paths that cannot block a merge |
+| Any check pending, `cancelled`, or `stale`                                               | Note — an in-flight run is not evidence of drift                                                  |
+| Required check absent from `main` HEAD                                                   | Note — distinct from absent from protection, which is drift                                       |
+| Outcome probe did not run                                                                | Note — an unverified rule announces itself rather than passing silently                           |
+
+`success`, `neutral`, and `skipped` are treated as passing.
+
 ## Versioning and rollback
 
 Tags are immutable. Contract-breaking changes require a new major. Compatible validation additions require a minor; fixes require a patch. If a release is defective, publish a new tag and update each caller by PR rather than moving an existing tag.

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "upstream": {
-    "repository": "minipuft/claude-prompts",
+    "repository": "minipuft/claude-prompts-mcp",
     "packagePath": "server/package.json",
     "releaseWorkflowPath": ".github/workflows/extension-publish.yml"
   },
