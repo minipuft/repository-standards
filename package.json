@@ -1,8 +1,16 @@
 {
   "name": "@minipuft/repository-standards-validation",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "retire-done-plans": "bin/retire-done-plans.cjs"
+  },
+  "files": [
+    "bin/retire-done-plans.cjs",
+    "contracts/plan-retirement.schema.json",
+    "conventions/plan-frontmatter.md"
+  ],
   "engines": {
     "node": ">=24"
   },
