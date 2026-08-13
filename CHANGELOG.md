@@ -3,6 +3,7 @@
 ## 1.2.0
 
 - Add the portable `retire-done-plans` executable and consumer configuration schema.
+- Add optional composite-action packaging for CI consumers without duplicating the executable.
 - Fail closed when retirement configuration or a configured citation source is missing.
 - Preserve plan link rewriting and committed-content protection for repositories without CI.
 

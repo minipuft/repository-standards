@@ -7,6 +7,7 @@ Versioned consumer contracts, reusable validation, dependency policy, and read-o
 - `contracts/downstream-contract.schema.json`: canonical contract v1 schema.
 - `profiles.json`: canonical profile registry.
 - `actions/verify-consumer`: canonical executable verifier.
+- `actions/retire-plans`: optional GitHub Actions packaging for the retirement executable.
 - `.github/workflows/consumer-contract.yml`: canonical read-only reusable workflow.
 - `renovate/*.json`: canonical shareable Renovate presets.
 - `fleet.json` and `scripts/audit-fleet.mjs`: canonical read-only drift inventory and audit.
@@ -71,6 +72,15 @@ retire-done-plans --apply      # move committed finished plans and rewrite relat
 
 The plan schema and `done` versus `reference` decision are documented in
 [`conventions/plan-frontmatter.md`](conventions/plan-frontmatter.md).
+
+The optional composite action runs the same executable; consumers should pin it to an immutable
+commit SHA:
+
+```yaml
+- uses: minipuft/repository-standards/actions/retire-plans@0123456789abcdef0123456789abcdef01234567
+  with:
+    mode: apply
+```
 
 ## Contract boundaries
 
