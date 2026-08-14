@@ -243,6 +243,54 @@ function inboundLinks(planFile, corpus) {
   return hits;
 }
 
+/**
+ * Paths git ignores are not plans, and must not be reported as broken ones.
+ *
+ * Retirement's entire safety model is that git history is the surviving copy — the archive
+ * destination must be gitignored, and `--apply` refuses to archive a plan that is untracked or
+ * modified for exactly that reason. A gitignored file under the plans directory therefore cannot
+ * be a retirable plan by construction: there is nothing to retire it into and no history to
+ * retire it from. Reporting it as "a plan with no frontmatter" describes a document that is not
+ * a plan.
+ *
+ * This is not hypothetical. `claude-prompts-mcp` writes a machine-generated validation ledger to
+ * `<plan-stem>.validation-log.md` beside each plan and gitignores it; every "markdown under
+ * plans/" filter sees it while `git ls-files` does not. That disagreement reddened
+ * `plans:retire:check` on developer machines while CI — which checks out fresh and therefore has
+ * no ignored files at all — stayed green. A gate that fails only where the fix is applied is
+ * worse than one that fails everywhere.
+ *
+ * Deliberately WITHOUT `--no-index`: a tracked file is never reported as ignored even when a
+ * pattern matches it, so a plan that is committed stays visible no matter what the ignore rules
+ * say. Only genuinely untracked-and-ignored files are skipped.
+ *
+ * Fails open. A consumer with no git repository, or a git too old for `--stdin -z`, gets the
+ * previous behaviour rather than a crash — this filter removes noise, and losing it must never
+ * cost the scan itself.
+ */
+function gitIgnored(files, root = REPO_ROOT) {
+  if (files.length === 0) return new Set();
+  const relative = files.map((file) => path.relative(root, file));
+  try {
+    const output = execFileSync("git", ["check-ignore", "--stdin", "-z"], {
+      cwd: root,
+      input: relative.join("\0") + "\0",
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return new Set(
+      output
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => path.resolve(root, entry)),
+    );
+  } catch (error) {
+    // Exit 1 is "nothing matched", which is a result, not a failure.
+    if (error.status === 1) return new Set();
+    return new Set();
+  }
+}
+
 function collect() {
   const corpus = configuredCorpus();
   const segregatedRoots = SEGREGATED_DIRNAMES.map(
@@ -256,9 +304,12 @@ function collect() {
   const relocations = [];
   const allReference = [];
 
-  for (const file of walk(PLANS_DIR)) {
-    if (!file.endsWith(".md")) continue;
+  const candidates = walk(PLANS_DIR).filter((file) => file.endsWith(".md"));
+  const ignored = gitIgnored(candidates);
+
+  for (const file of candidates) {
     if (isSegregated(file)) continue;
+    if (ignored.has(path.resolve(file))) continue;
 
     const rel = path.relative(REPO_ROOT, file);
     const { status, problems } = readFrontmatter(file);
@@ -717,6 +768,49 @@ function selfTest() {
     assert(
       inboundLinks(path.join(sandbox, "keep.md"), corpus).length === 1,
       "inbound link from the sibling not detected",
+    );
+
+    // 6b. A gitignored markdown file under plans/ is not a plan, and a tracked one always is.
+    //
+    // Both directions are asserted, because the interesting failure is not "the filter runs" —
+    // it is the filter removing something it should have kept. `--no-index` is deliberately
+    // absent from the implementation so that a COMMITTED plan survives an ignore rule that
+    // matches it; without the second assertion below, adding `--no-index` later would silently
+    // make every plan in a broadly-ignored directory invisible, which is the failure mode this
+    // tool exists to prevent.
+    const ignoreRepo = path.join(sandbox, "ignore-repo");
+    fs.mkdirSync(ignoreRepo);
+    const igit = (...gitArgs) =>
+      execFileSync("git", gitArgs, { cwd: ignoreRepo, encoding: "utf8" });
+    igit("init", "-q");
+    fs.writeFileSync(
+      path.join(ignoreRepo, ".gitignore"),
+      "*.validation-log.md\ntracked.md\n",
+    );
+    const ledger = path.join(ignoreRepo, "notes.validation-log.md");
+    const trackedPlan = path.join(ignoreRepo, "tracked.md");
+    fs.writeFileSync(ledger, "# machine-written, no frontmatter\n");
+    fs.writeFileSync(trackedPlan, fm("done"));
+    igit("add", "-f", "tracked.md", ".gitignore");
+    igit(
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "user.name=t",
+      "commit",
+      "-q",
+      "-m",
+      "seed",
+    );
+
+    const ignoredSet = gitIgnored([ledger, trackedPlan], ignoreRepo);
+    assert(
+      ignoredSet.has(path.resolve(ledger)),
+      "gitignored ledger sidecar was not filtered — it would be reported as a plan with no frontmatter",
+    );
+    assert(
+      !ignoredSet.has(path.resolve(trackedPlan)),
+      "a COMMITTED plan was filtered out by an ignore rule — tracked plans must stay visible",
     );
 
     // 7. The archive guard flags untracked and modified plans, and clears committed ones.
