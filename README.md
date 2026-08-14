@@ -64,6 +64,9 @@ Each consumer must own `plan-retirement.config.json`:
 or path outside the repository is an error before any plan is scanned or moved. This prevents an
 incomplete citation corpus from being mistaken for an unreferenced plan set.
 
+Consumers must also gitignore their configured plan directory's `archive/` child. `--apply`
+verifies the ignore rule before moving a `done` plan because git history is the archive.
+
 ```bash
 retire-done-plans              # inspect the queue and fail on unsafe classification
 retire-done-plans --self-test  # exercise safety invariants against the consumer corpus

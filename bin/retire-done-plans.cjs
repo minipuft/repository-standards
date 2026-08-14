@@ -342,6 +342,38 @@ function uncommittedPlans(records, root = REPO_ROOT) {
 }
 
 /**
+ * Prove the archive destination has the lifecycle the contract promises.
+ *
+ * A consumer that does not ignore plans/archive would turn retirement into an ordinary tracked
+ * move, keeping completed documents in the repository instead of using history as the archive.
+ * More importantly, the committed-content guard below is justified by the ignored destination;
+ * applying without that premise would make the tool's safety explanation false.
+ */
+function assertArchiveDestinationIgnored(root = REPO_ROOT) {
+  const probe = path.relative(
+    root,
+    path.join(PLANS_DIR, ARCHIVE_DIRNAME, ".retirement-ignore-probe"),
+  );
+  try {
+    execFileSync(
+      "git",
+      ["check-ignore", "--quiet", "--no-index", "--", probe],
+      {
+        cwd: root,
+        stdio: "ignore",
+      },
+    );
+  } catch (error) {
+    if (error.status === 1) {
+      throw new Error(
+        `${path.join(path.relative(root, PLANS_DIR), ARCHIVE_DIRNAME)}/ must be gitignored before --apply`,
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * The one definition of "a link this tool can re-base". Returned fresh because it carries `g`,
  * and a shared global regex holds `lastIndex` between calls.
  *
@@ -846,10 +878,11 @@ function main() {
 
   let dirtyQueue;
   try {
+    if (queue.length > 0) assertArchiveDestinationIgnored();
     dirtyQueue = uncommittedPlans(queue);
   } catch (error) {
     console.error(
-      `[retire-done-plans] cannot verify the queue is committed (${error.message}); refusing to archive.`,
+      `[retire-done-plans] cannot verify archive safety (${error.message}); refusing to archive.`,
     );
     process.exitCode = 1;
     return;

@@ -128,6 +128,36 @@ test("a done plan with an inbound citation is a hard failure", (t) => {
   assert.match(result.stderr, /cited by docs\/guide\.md/);
 });
 
+test("apply refuses an archive destination that is not gitignored", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const plan = path.join(root, "plans", "finished.md");
+  fs.writeFileSync(plan, frontmatter("done"));
+  initializeGit(root);
+
+  const result = run(root, "--apply");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /plans[/\\]archive[/\\] must be gitignored/);
+  assert.equal(fs.existsSync(plan), true);
+});
+
+test("apply archives a committed plan when the destination is ignored", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const plan = path.join(root, "plans", "finished.md");
+  fs.writeFileSync(plan, frontmatter("done"));
+  fs.writeFileSync(path.join(root, ".gitignore"), "/plans/archive/\n");
+  initializeGit(root);
+
+  const result = run(root, "--apply");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(plan), false);
+  assert.equal(
+    fs.existsSync(path.join(root, "plans", "archive", "finished.md")),
+    true,
+  );
+});
+
 test("the extracted self-test runs against a real consumer corpus", (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
