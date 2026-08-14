@@ -14,44 +14,58 @@
     "localValidationWorkflow"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": {
+      "const": 1
+    },
     "profile": {
       "enum": ["marketplace", "node-consumer", "npm-publisher"]
     },
-    "nodeVersionFile": { "const": ".node-version" },
-    "packageManager": { "const": "npm" },
-    "upstreamPackage": { "const": "claude-prompts" },
-    "upstreamWriter": { "const": "claude-prompts-release-sync" },
+    "nodeVersionFile": {
+      "const": ".node-version"
+    },
+    "packageManager": {
+      "const": "npm"
+    },
+    "upstreamPackage": {
+      "const": "claude-prompts"
+    },
+    "upstreamWriter": {
+      "const": "claude-prompts-release-sync"
+    },
     "requiredPaths": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "$ref": "#/definitions/repositoryPath" }
+      "items": {
+        "$ref": "#/definitions/repositoryPath"
+      }
     },
     "requiredChecks": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1 }
-    },
-    "localValidationWorkflow": { "$ref": "#/definitions/repositoryPath" },
-    "marketplace": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "manifestPath",
-        "pluginName",
-        "sourceUrl",
-        "sourceRef",
-        "license"
-      ],
-      "properties": {
-        "manifestPath": { "$ref": "#/definitions/repositoryPath" },
-        "pluginName": { "type": "string", "minLength": 1 },
-        "sourceUrl": { "type": "string", "pattern": "^https://github\\.com/" },
-        "sourceRef": { "type": "string", "minLength": 1 },
-        "license": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
       }
+    },
+    "localValidationWorkflow": {
+      "$ref": "#/definitions/repositoryPath"
+    },
+    "marketplace": {
+      "description": "One marketplace entry, or an array of them when the index lists several plugins.",
+      "oneOf": [
+        {
+          "$ref": "#/definitions/marketplaceEntry"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/marketplaceEntry"
+          }
+        }
+      ]
     },
     "publish": {
       "type": "object",
@@ -63,10 +77,21 @@
         "unpackedSizeBudgetBytes"
       ],
       "properties": {
-        "packageName": { "type": "string", "minLength": 1 },
-        "requiresTrustedPublisher": { "const": true },
-        "packedSizeBudgetBytes": { "type": "integer", "minimum": 1 },
-        "unpackedSizeBudgetBytes": { "type": "integer", "minimum": 1 }
+        "packageName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiresTrustedPublisher": {
+          "const": true
+        },
+        "packedSizeBudgetBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unpackedSizeBudgetBytes": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     }
   },
@@ -74,32 +99,92 @@
     "repositoryPath": {
       "type": "string",
       "minLength": 1,
-      "not": { "pattern": "^(?:/|.*(?:^|/)\\.\\.(?:/|$))" }
+      "not": {
+        "pattern": "^(?:/|.*(?:^|/)\\.\\.(?:/|$))"
+      }
+    },
+    "marketplaceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestPath",
+        "pluginName",
+        "sourceUrl",
+        "sourceRef",
+        "license"
+      ],
+      "properties": {
+        "manifestPath": {
+          "$ref": "#/definitions/repositoryPath"
+        },
+        "pluginName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceUrl": {
+          "type": "string",
+          "pattern": "^https://github\\.com/"
+        },
+        "sourceRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "versionSource": {
+          "enum": ["listing", "ref"],
+          "default": "listing",
+          "description": "Where this listing's freshness comes from. 'listing' requires a SemVer `version` field written by the release sync. 'ref' requires the field to be ABSENT, because the entry tracks a branch that republishes itself and a version with no writer goes stale silently."
+        }
+      }
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "profile": { "const": "marketplace" } } },
+      "if": {
+        "properties": {
+          "profile": {
+            "const": "marketplace"
+          }
+        }
+      },
       "then": {
-        "properties": { "marketplace": {} },
+        "properties": {
+          "marketplace": {}
+        },
         "required": ["marketplace"]
       }
     },
     {
       "if": {
         "properties": {
-          "profile": { "enum": ["node-consumer", "npm-publisher"] }
+          "profile": {
+            "enum": ["node-consumer", "npm-publisher"]
+          }
         }
       },
       "then": {
-        "properties": { "nodeVersionFile": {}, "packageManager": {} },
+        "properties": {
+          "nodeVersionFile": {},
+          "packageManager": {}
+        },
         "required": ["nodeVersionFile", "packageManager"]
       }
     },
     {
-      "if": { "properties": { "profile": { "const": "npm-publisher" } } },
+      "if": {
+        "properties": {
+          "profile": {
+            "const": "npm-publisher"
+          }
+        }
+      },
       "then": {
-        "properties": { "publish": {} },
+        "properties": {
+          "publish": {}
+        },
         "required": ["publish"]
       }
     }

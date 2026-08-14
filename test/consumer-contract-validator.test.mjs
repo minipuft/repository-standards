@@ -215,6 +215,117 @@ test("marketplace validates plugin version, license, and source", () => {
   );
 });
 
+test("an index listing several plugins validates every declared entry", () => {
+  // A single-entry contract silently exempts every other plugin in the same index: a PR
+  // touching only the undeclared one passes the required check without it being read.
+  const root = mkdtempSync(join(tmpdir(), "marketplace-multi-"));
+  const contract = {
+    schemaVersion: 1,
+    profile: "marketplace",
+    upstreamPackage: "claude-prompts",
+    upstreamWriter: "claude-prompts-release-sync",
+    requiredPaths: [".claude-plugin/marketplace.json"],
+    requiredChecks: ["Consumer Contract"],
+    localValidationWorkflow: ".github/workflows/consumer-contract.yml",
+    marketplace: [
+      {
+        manifestPath: ".claude-plugin/marketplace.json",
+        pluginName: "claude-prompts",
+        sourceUrl: "https://github.com/minipuft/claude-prompts-mcp.git",
+        sourceRef: "dist",
+        license: "MIT",
+      },
+      {
+        manifestPath: ".claude-plugin/marketplace.json",
+        pluginName: "codex-prompts",
+        sourceUrl: "https://github.com/minipuft/codex-prompts.git",
+        sourceRef: "dist",
+        license: "MIT",
+        versionSource: "ref",
+      },
+    ],
+  };
+  write(root, "downstream-contract.json", contract);
+  write(root, ".github/workflows/consumer-contract.yml", "name: Contract\n");
+
+  const manifest = {
+    plugins: [
+      {
+        name: "claude-prompts",
+        version: "4.0.0",
+        license: "MIT",
+        source: {
+          url: "https://github.com/minipuft/claude-prompts-mcp.git",
+          ref: "dist",
+        },
+      },
+      {
+        name: "codex-prompts",
+        license: "MIT",
+        source: {
+          url: "https://github.com/minipuft/codex-prompts.git",
+          ref: "dist",
+        },
+      },
+    ],
+  };
+  write(root, ".claude-plugin/marketplace.json", manifest);
+  assert.deepEqual(violations(root, "marketplace"), []);
+
+  // The second entry is genuinely read: breaking only it must fail.
+  const drifted = structuredClone(manifest);
+  drifted.plugins[1].source.ref = "main";
+  write(root, ".claude-plugin/marketplace.json", drifted);
+  assert.match(violations(root, "marketplace").join("\n"), /codex-prompts/);
+});
+
+test("versionSource ref requires the version field to be ABSENT", () => {
+  // The invariant is "no field without a writer". A version on a ref-tracking entry has nobody
+  // to update it, and Claude Code keys its install directory on the listing version when
+  // present — so a stale one lands two different published trees in a single cache directory.
+  // Only an absence check can enforce that, so this asserts the opposite of the usual case.
+  const root = mkdtempSync(join(tmpdir(), "marketplace-refver-"));
+  const contract = {
+    schemaVersion: 1,
+    profile: "marketplace",
+    upstreamPackage: "claude-prompts",
+    upstreamWriter: "claude-prompts-release-sync",
+    requiredPaths: [".claude-plugin/marketplace.json"],
+    requiredChecks: ["Consumer Contract"],
+    localValidationWorkflow: ".github/workflows/consumer-contract.yml",
+    marketplace: {
+      manifestPath: ".claude-plugin/marketplace.json",
+      pluginName: "codex-prompts",
+      sourceUrl: "https://github.com/minipuft/codex-prompts.git",
+      sourceRef: "dist",
+      license: "MIT",
+      versionSource: "ref",
+    },
+  };
+  write(root, "downstream-contract.json", contract);
+  write(root, ".github/workflows/consumer-contract.yml", "name: Contract\n");
+
+  const entry = {
+    name: "codex-prompts",
+    license: "MIT",
+    source: {
+      url: "https://github.com/minipuft/codex-prompts.git",
+      ref: "dist",
+    },
+  };
+  write(root, ".claude-plugin/marketplace.json", { plugins: [entry] });
+  assert.deepEqual(violations(root, "marketplace"), []);
+
+  // A perfectly well-formed SemVer is still a violation here — that is the whole point.
+  write(root, ".claude-plugin/marketplace.json", {
+    plugins: [{ ...entry, version: "0.1.3" }],
+  });
+  assert.match(
+    violations(root, "marketplace").join("\n"),
+    /carries a version field/,
+  );
+});
+
 test("local symlink paths may be required without following outside the workspace", () => {
   const { root, contract } = nodeFixture();
   mkdirSync(join(root, "hooks"), { recursive: true });
