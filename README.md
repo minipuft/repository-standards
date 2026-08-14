@@ -7,10 +7,13 @@ Versioned consumer contracts, reusable validation, dependency policy, and read-o
 - `contracts/downstream-contract.schema.json`: canonical contract v1 schema.
 - `profiles.json`: canonical profile registry.
 - `actions/verify-consumer`: canonical executable verifier.
+- `actions/retire-plans`: optional GitHub Actions packaging for the retirement executable.
 - `.github/workflows/consumer-contract.yml`: canonical read-only reusable workflow.
 - `renovate/*.json`: canonical shareable Renovate presets.
 - `fleet.json` and `scripts/audit-fleet.mjs`: canonical read-only drift inventory and audit.
 - `conventions/plan-frontmatter.md`: canonical plan frontmatter schema, status vocabulary, and retirement contract.
+- `bin/retire-done-plans.cjs`: portable plan-retirement executable for local and CI use.
+- `contracts/plan-retirement.schema.json`: fail-closed consumer configuration contract.
 - Product-specific build, symlink, plugin, and release behavior remains local to each consumer.
 
 Consumers pin both the reusable workflow and its `standards-ref` input to the same immutable commit SHA:
@@ -40,6 +43,46 @@ npm run validate:renovate
 npm run format:check
 npm run validate
 npm run audit:fleet
+```
+
+## Retire completed plans
+
+Install this repository at an immutable tag or commit, then run `retire-done-plans` from the
+consumer repository. The executable works without GitHub Actions and accepts `--repo PATH` when
+the consumer is not the current directory.
+
+Each consumer must own `plan-retirement.config.json`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/minipuft/repository-standards/main/contracts/plan-retirement.schema.json",
+  "linkSources": ["plans", "docs", "src", ".github"]
+}
+```
+
+`linkSources` has no default. A missing configuration, empty key, missing source, duplicate source,
+or path outside the repository is an error before any plan is scanned or moved. This prevents an
+incomplete citation corpus from being mistaken for an unreferenced plan set.
+
+Consumers must also gitignore their configured plan directory's `archive/` child. `--apply`
+verifies the ignore rule before moving a `done` plan because git history is the archive.
+
+```bash
+retire-done-plans              # inspect the queue and fail on unsafe classification
+retire-done-plans --self-test  # exercise safety invariants against the consumer corpus
+retire-done-plans --apply      # move committed finished plans and rewrite relative links
+```
+
+The plan schema and `done` versus `reference` decision are documented in
+[`conventions/plan-frontmatter.md`](conventions/plan-frontmatter.md).
+
+The optional composite action runs the same executable; consumers should pin it to an immutable
+commit SHA:
+
+```yaml
+- uses: minipuft/repository-standards/actions/retire-plans@0123456789abcdef0123456789abcdef01234567
+  with:
+    mode: apply
 ```
 
 ## Contract boundaries

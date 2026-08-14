@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/minipuft/repository-standards/main/contracts/plan-retirement.schema.json",
+  "title": "Plan retirement consumer configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["linkSources"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "plansDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "default": "plans",
+      "description": "Repository-relative directory containing the working plan set."
+    },
+    "linkSources": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Repository-relative files or directories scanned for inbound plan citations.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

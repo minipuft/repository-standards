@@ -1,0 +1,33 @@
+name: Retire completed plans
+description: Run the fail-closed plan retirement contract in a consuming repository.
+
+inputs:
+  repository-path:
+    description: Path to the checked-out consumer repository.
+    required: false
+    default: .
+  mode:
+    description: Operation to run (check, apply, or self-test).
+    required: false
+    default: check
+
+runs:
+  using: composite
+  steps:
+    - name: Run plan retirement
+      shell: bash
+      env:
+        RETIRE_REPOSITORY_PATH: ${{ inputs.repository-path }}
+        RETIRE_MODE: ${{ inputs.mode }}
+      run: |
+        case "$RETIRE_MODE" in
+          check) MODE_ARGUMENT=() ;;
+          apply) MODE_ARGUMENT=(--apply) ;;
+          self-test) MODE_ARGUMENT=(--self-test) ;;
+          *)
+            echo "::error::Unsupported retirement mode: $RETIRE_MODE"
+            exit 1
+            ;;
+        esac
+        node "$GITHUB_ACTION_PATH/../../bin/retire-done-plans.cjs" \
+          --repo "$RETIRE_REPOSITORY_PATH" "${MODE_ARGUMENT[@]}"
