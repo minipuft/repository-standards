@@ -42,6 +42,17 @@
       "mergeMode": "auto",
       "renovatePresetVersion": null,
       "dependencyAutomation": "none"
+    },
+    {
+      "repository": "minipuft/codex-prompts",
+      "profile": "node-consumer",
+      "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
+      "requiredChecks": ["validate", "Consumer Contract / Consumer Contract"],
+      "nodeMajor": "24",
+      "claudePromptsWriter": "claude-prompts-release-sync",
+      "mergeMode": "auto",
+      "renovatePresetVersion": null,
+      "dependencyAutomation": "none"
     }
   ]
 }
