@@ -9,9 +9,15 @@
     "upstream": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "packagePath", "releaseWorkflowPath"],
+      "required": [
+        "repository",
+        "repositoryId",
+        "packagePath",
+        "releaseWorkflowPath"
+      ],
       "properties": {
         "repository": { "$ref": "#/definitions/repository" },
+        "repositoryId": { "$ref": "#/definitions/repositoryId" },
         "packagePath": { "type": "string", "minLength": 1 },
         "releaseWorkflowPath": { "type": "string", "minLength": 1 }
       }
@@ -24,6 +30,7 @@
         "additionalProperties": false,
         "required": [
           "repository",
+          "repositoryId",
           "profile",
           "standardsRef",
           "requiredChecks",
@@ -35,6 +42,7 @@
         ],
         "properties": {
           "repository": { "$ref": "#/definitions/repository" },
+          "repositoryId": { "$ref": "#/definitions/repositoryId" },
           "profile": {
             "enum": ["marketplace", "node-consumer", "npm-publisher"]
           },
@@ -58,6 +66,7 @@
     }
   },
   "definitions": {
-    "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" }
+    "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+    "repositoryId": { "type": "integer", "exclusiveMinimum": 0 }
   }
 }
