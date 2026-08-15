@@ -35,7 +35,7 @@
     {
       "repository": "minipuft/minipuft-plugins",
       "profile": "marketplace",
-      "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
+      "standardsRef": "860df1a9b9ba68c25dafbc6c175548c9d343b7dc",
       "requiredChecks": ["Consumer Contract / Consumer Contract"],
       "nodeMajor": null,
       "claudePromptsWriter": "claude-prompts-release-sync",
