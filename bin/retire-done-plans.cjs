@@ -494,6 +494,15 @@ function rewriteLinks(text, fromDir, toDir, moveMap = new Map()) {
       const destination =
         moveMap.get(absolute) ?? (fs.existsSync(absolute) ? absolute : null);
       if (!destination) return whole;
+      // Rewrite only links something actually moved for. When the citing file stays put and
+      // the target stays put, the recomputed path is the same file — but `path.relative`
+      // returns a bare `sibling.md`, which fails the `startsWith(".")` test below and gets a
+      // `./` prepended. That is a no-op for resolution and a real diff for every consumer:
+      // measured 2026-08-14 on the first live release run, it normalized links in ten
+      // untouched documents and left four markdown tables misaligned, failing a downstream
+      // `prettier --check` gate and blocking the release PR it was supposed to prepare.
+      // A tool that relocates plans must not restyle prose it was never asked to touch.
+      if (!moveMap.has(absolute) && fromDir === toDir) return whole;
       let rewritten = path
         .relative(toDir, destination)
         .split(path.sep)
