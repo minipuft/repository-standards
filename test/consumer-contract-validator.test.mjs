@@ -186,7 +186,7 @@ test("marketplace validates plugin version, license, and source", () => {
     marketplace: {
       manifestPath: ".claude-plugin/marketplace.json",
       pluginName: "claude-prompts",
-      sourceUrl: "https://github.com/minipuft/claude-prompts.git",
+      sourceUrl: "https://github.com/minipuft/claude-prompts-mcp.git",
       sourceRef: "dist",
       license: "MIT",
     },

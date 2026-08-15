@@ -26,6 +26,9 @@ function healthySnapshots() {
       ),
       mergeMode: entry.mergeMode,
       nodeVersion: entry.nodeMajor,
+      // A healthy repository answers to its own name. Defaulting this to the declared value keeps
+      // the fixture honest: every drift case below has to set the divergence explicitly.
+      canonicalName: entry.repository,
       // Keyed by the profile's declared version source, not hardcoded to `lockVersion`. A fixture
       // that always set `lockVersion` would keep passing for a marketplace member whose real
       // version lives in its listing — the fixture would be asserting the defect.
@@ -40,7 +43,11 @@ function healthySnapshots() {
       dependabotPresent: entry.dependencyAutomation === "migrating",
     };
   }
-  return { upstreamVersion: "3.1.1", repositories };
+  return {
+    upstreamVersion: "3.1.1",
+    upstreamCanonicalName: fleet.upstream.repository,
+    repositories,
+  };
 }
 
 function mutatedAudit(repository, mutate) {
@@ -269,4 +276,57 @@ test("an uncollected outcome probe is reported, not silently skipped", () => {
     formatFleetReport(audit),
     /Check outcomes were not collected; required-check health is unverified/,
   );
+});
+
+// A renamed repository keeps answering to its old path through GitHub's redirect, so every fetch
+// succeeds and nothing reports it. fleet.upstream.repository sat on the pre-rename name for months
+// exactly this way. Drift, not a note: an abandoned name stays claimable, and the day it is
+// claimed every consumer silently retargets.
+test("a member resolving through a rename redirect is drift", () => {
+  const audit = mutatedAudit(
+    "minipuft/gemini-prompts",
+    (snapshot) => (snapshot.canonicalName = "minipuft/gemini-prompts-renamed"),
+  );
+  assert.ok(audit.violationCount > 0);
+  assert.match(formatFleetReport(audit), /resolves through a rename redirect/);
+});
+
+test("an unresolved member name is an unverified note, not drift", () => {
+  const audit = mutatedAudit(
+    "minipuft/gemini-prompts",
+    (snapshot) => delete snapshot.canonicalName,
+  );
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /rename-redirect exposure is unverified/,
+  );
+});
+
+// The upstream is not a fleet member, and it is the one whose name actually rotted — a
+// per-member-only check would have missed the instance that motivated the rule.
+test("an upstream resolving through a rename redirect is drift", () => {
+  const snapshots = healthySnapshots();
+  snapshots.upstreamCanonicalName = "minipuft/claude-prompts-mcp-renamed";
+  const audit = auditFleet(fleet, snapshots);
+  assert.ok(audit.violationCount > 0);
+  assert.match(
+    formatFleetReport(audit),
+    /declared minipuft\/claude-prompts-mcp, canonical minipuft\/claude-prompts-mcp-renamed/,
+  );
+});
+
+test("an unresolved upstream name is an unverified note, not drift", () => {
+  const snapshots = healthySnapshots();
+  delete snapshots.upstreamCanonicalName;
+  const audit = auditFleet(fleet, snapshots);
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /rename-redirect exposure is unverified/,
+  );
+});
+
+test("the declared upstream is the post-rename name", () => {
+  assert.equal(fleet.upstream.repository, "minipuft/claude-prompts-mcp");
 });

@@ -63,6 +63,25 @@ async function checkOutcomes(repository) {
   );
 }
 
+// GitHub answers a request for a renamed repository with its CANONICAL full_name, so the
+// declared path and the returned name diverge exactly when the declared path is a redirect.
+//
+// Every failure resolves to undefined, which auditCanonicalName reports as an unverified note
+// rather than as drift. A genuinely missing repository cannot reach here quietly: `raw()` for its
+// contract runs first in repositorySnapshot and throws, and the upstream's package fetch runs
+// first in main(). Swallowing here therefore covers a token or transport problem, which is a
+// reason to announce the rule as unverified, not a reason to fail the fleet.
+async function canonicalName(repository) {
+  try {
+    const payload = JSON.parse(
+      await request(`https://api.github.com/repos/${repository}`),
+    );
+    return payload.full_name;
+  } catch {
+    return undefined;
+  }
+}
+
 async function repositorySnapshot(entry, mergeMode) {
   const contract = JSON.parse(
     await raw(entry.repository, "downstream-contract.json"),
@@ -81,6 +100,7 @@ async function repositorySnapshot(entry, mergeMode) {
     caller,
     protectionChecks: protection.required_status_checks?.contexts ?? [],
     checkOutcomes: await checkOutcomes(entry.repository),
+    canonicalName: await canonicalName(entry.repository),
     mergeMode,
     dependabotPresent:
       (await request(
@@ -123,6 +143,9 @@ async function main() {
   const modes = mergeModes(workflow, repositories);
   const snapshots = {
     upstreamVersion: upstreamPackage.version,
+    // The upstream is not a fleet member, so its name is resolved here rather than in
+    // repositorySnapshot — and it is the one that actually rotted.
+    upstreamCanonicalName: await canonicalName(fleet.upstream.repository),
     repositories: {},
   };
   for (const entry of fleet.repositories) {
