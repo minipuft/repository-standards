@@ -26,6 +26,9 @@ function healthySnapshots() {
       ),
       mergeMode: entry.mergeMode,
       nodeVersion: entry.nodeMajor,
+      // A healthy repository answers to its own name AND its pinned id. Defaulting both to the
+      // declared values keeps the fixture honest: every case below sets its divergence explicitly.
+      identity: { id: entry.repositoryId, fullName: entry.repository },
       // Keyed by the profile's declared version source, not hardcoded to `lockVersion`. A fixture
       // that always set `lockVersion` would keep passing for a marketplace member whose real
       // version lives in its listing — the fixture would be asserting the defect.
@@ -40,7 +43,14 @@ function healthySnapshots() {
       dependabotPresent: entry.dependencyAutomation === "migrating",
     };
   }
-  return { upstreamVersion: "3.1.1", repositories };
+  return {
+    upstreamVersion: "3.1.1",
+    upstreamIdentity: {
+      id: fleet.upstream.repositoryId,
+      fullName: fleet.upstream.repository,
+    },
+    repositories,
+  };
 }
 
 function mutatedAudit(repository, mutate) {
@@ -269,4 +279,86 @@ test("an uncollected outcome probe is reported, not silently skipped", () => {
     formatFleetReport(audit),
     /Check outcomes were not collected; required-check health is unverified/,
   );
+});
+
+test("the declared upstream is the post-rename name", () => {
+  assert.equal(fleet.upstream.repository, "minipuft/claude-prompts-mcp");
+});
+
+// A repository's NAME is a mutable label; its id is the identity. These cover both directions,
+// and the SECOND is the one a name-only comparison silently passes.
+test("a renamed member is drift — the declared name is a redirect", () => {
+  const audit = mutatedAudit(
+    "minipuft/gemini-prompts",
+    (snapshot) => (snapshot.identity.fullName = "minipuft/gemini-prompts-v2"),
+  );
+  assert.ok(audit.violationCount > 0);
+  assert.match(
+    formatFleetReport(audit),
+    /repository was renamed: declared minipuft\/gemini-prompts is a redirect/,
+  );
+});
+
+// The case that motivated pinning ids. Someone claims an abandoned name: the API returns THEIR
+// repository, whose full_name equals the declared string exactly. A name comparison passes; the
+// id does not. This test fails against the name-only implementation that preceded it.
+test("a member name taken over by a different repository is drift", () => {
+  const audit = mutatedAudit(
+    "minipuft/gemini-prompts",
+    (snapshot) => (snapshot.identity.id = 999999999),
+  );
+  assert.ok(audit.violationCount > 0);
+  assert.match(formatFleetReport(audit), /repository identity changed/);
+  assert.match(formatFleetReport(audit), /may now belong to someone else/);
+});
+
+test("an unresolved member identity is an unverified note, not drift", () => {
+  const audit = mutatedAudit(
+    "minipuft/gemini-prompts",
+    (snapshot) => delete snapshot.identity,
+  );
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /rename and takeover exposure is unverified/,
+  );
+});
+
+// The upstream is not a fleet member and is the one whose name actually rotted, so it is graded
+// separately — a per-member-only check would have missed the motivating instance.
+test("a renamed upstream is drift", () => {
+  const snapshots = healthySnapshots();
+  snapshots.upstreamIdentity.fullName = "minipuft/claude-prompts-engine";
+  const audit = auditFleet(fleet, snapshots);
+  assert.ok(audit.violationCount > 0);
+  assert.match(formatFleetReport(audit), /repository was renamed/);
+});
+
+test("an upstream name taken over by a different repository is drift", () => {
+  const snapshots = healthySnapshots();
+  snapshots.upstreamIdentity.id = 111111111;
+  const audit = auditFleet(fleet, snapshots);
+  assert.ok(audit.violationCount > 0);
+  assert.match(formatFleetReport(audit), /repository identity changed/);
+});
+
+test("an unresolved upstream identity is an unverified note, not drift", () => {
+  const snapshots = healthySnapshots();
+  delete snapshots.upstreamIdentity;
+  const audit = auditFleet(fleet, snapshots);
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /rename and takeover exposure is unverified/,
+  );
+});
+
+test("every fleet entry pins an immutable repository id", () => {
+  assert.ok(Number.isInteger(fleet.upstream.repositoryId));
+  for (const entry of fleet.repositories) {
+    assert.ok(
+      Number.isInteger(entry.repositoryId),
+      `${entry.repository} has no pinned repositoryId, so its name cannot be verified as identity`,
+    );
+  }
 });

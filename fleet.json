@@ -2,12 +2,14 @@
   "schemaVersion": 1,
   "upstream": {
     "repository": "minipuft/claude-prompts-mcp",
+    "repositoryId": 941652610,
     "packagePath": "server/package.json",
     "releaseWorkflowPath": ".github/workflows/extension-publish.yml"
   },
   "repositories": [
     {
       "repository": "minipuft/gemini-prompts",
+      "repositoryId": 1131647001,
       "profile": "node-consumer",
       "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
       "requiredChecks": ["validate", "Consumer Contract / Consumer Contract"],
@@ -19,6 +21,7 @@
     },
     {
       "repository": "minipuft/opencode-prompts",
+      "repositoryId": 1134001226,
       "profile": "npm-publisher",
       "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
       "requiredChecks": [
@@ -34,6 +37,7 @@
     },
     {
       "repository": "minipuft/minipuft-plugins",
+      "repositoryId": 1126488425,
       "profile": "marketplace",
       "standardsRef": "860df1a9b9ba68c25dafbc6c175548c9d343b7dc",
       "requiredChecks": ["Consumer Contract / Consumer Contract"],
@@ -45,6 +49,7 @@
     },
     {
       "repository": "minipuft/codex-prompts",
+      "repositoryId": 1323747142,
       "profile": "node-consumer",
       "standardsRef": "bb7c4fa89e2766ad39ac1b1e597ba8e5cd805d83",
       "requiredChecks": ["validate", "Consumer Contract / Consumer Contract"],

@@ -63,6 +63,32 @@ async function checkOutcomes(repository) {
   );
 }
 
+// Resolve the DECLARED name and return what it actually points at: GitHub's immutable numeric id
+// plus the canonical full_name. One request answers both questions auditRepositoryIdentity grades
+// — whether the name still belongs to the pinned repository, and whether that repository has been
+// renamed out from under the declared string.
+//
+// Deliberately fetched BY NAME, not by id. `GET /repositories/{id}` would return the canonical
+// name and catch a rename, but it can never observe a takeover: it resolves our own repository by
+// construction and would report healthy while the declared name pointed at a stranger. The
+// direction of the lookup IS the check.
+//
+// Every failure resolves to undefined, which grades as an unverified note rather than as drift. A
+// genuinely missing repository cannot reach here quietly: `raw()` for its contract runs first in
+// repositorySnapshot and throws, and the upstream's package fetch runs first in main(). Swallowing
+// here therefore covers a token or transport problem, which is a reason to announce the rule
+// unverified, not a reason to fail the fleet.
+async function repositoryIdentity(repository) {
+  try {
+    const payload = JSON.parse(
+      await request(`https://api.github.com/repos/${repository}`),
+    );
+    return { id: payload.id, fullName: payload.full_name };
+  } catch {
+    return undefined;
+  }
+}
+
 async function repositorySnapshot(entry, mergeMode) {
   const contract = JSON.parse(
     await raw(entry.repository, "downstream-contract.json"),
@@ -81,6 +107,7 @@ async function repositorySnapshot(entry, mergeMode) {
     caller,
     protectionChecks: protection.required_status_checks?.contexts ?? [],
     checkOutcomes: await checkOutcomes(entry.repository),
+    identity: await repositoryIdentity(entry.repository),
     mergeMode,
     dependabotPresent:
       (await request(
@@ -123,6 +150,9 @@ async function main() {
   const modes = mergeModes(workflow, repositories);
   const snapshots = {
     upstreamVersion: upstreamPackage.version,
+    // The upstream is not a fleet member, so its name is resolved here rather than in
+    // repositorySnapshot — and it is the one that actually rotted.
+    upstreamIdentity: await repositoryIdentity(fleet.upstream.repository),
     repositories: {},
   };
   for (const entry of fleet.repositories) {
