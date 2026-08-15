@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import Ajv from "ajv";
-import { auditFleet, formatFleetReport } from "../lib/fleet-drift-auditor.mjs";
+import {
+  auditFleet,
+  formatFleetReport,
+  VERSION_SOURCES,
+} from "../lib/fleet-drift-auditor.mjs";
 
 const fleet = JSON.parse(readFileSync("fleet.json", "utf8"));
 const schema = JSON.parse(readFileSync("contracts/fleet.schema.json", "utf8"));
@@ -19,7 +23,10 @@ function healthySnapshots() {
       protectionChecks: [...entry.requiredChecks],
       mergeMode: entry.mergeMode,
       nodeVersion: entry.nodeMajor,
-      lockVersion: "3.1.1",
+      // Keyed by the profile's declared version source, not hardcoded to `lockVersion`. A fixture
+      // that always set `lockVersion` would keep passing for a marketplace member whose real
+      // version lives in its listing — the fixture would be asserting the defect.
+      [VERSION_SOURCES[entry.profile].field]: "3.1.1",
       renovate: entry.renovatePresetVersion
         ? {
             extends: [
@@ -106,4 +113,63 @@ test("canonical Renovate rejects a remaining Dependabot config", () => {
   snapshots.repositories["minipuft/gemini-prompts"].dependabotPresent = true;
   const audit = auditFleet(fleet, snapshots);
   assert.match(formatFleetReport(audit), /legacy Dependabot config remains/);
+});
+
+// The defect these cover: version comparison used to sit inside `if (entry.nodeMajor !== null)`,
+// so a member with no Node floor was never compared to upstream at all. A test that only checked
+// the node-consumer path passed throughout — the marketplace member was invisible to it.
+test("a marketplace listing behind upstream is drift", () => {
+  const audit = mutatedAudit(
+    "minipuft/minipuft-plugins",
+    (snapshot) => (snapshot.listingVersion = "3.0.0"),
+  );
+  assert.ok(audit.violationCount > 0);
+  assert.match(formatFleetReport(audit), /marketplace listing is 3\.0\.0/);
+});
+
+test("a marketplace member with no listing version is drift, not a silent pass", () => {
+  const audit = mutatedAudit(
+    "minipuft/minipuft-plugins",
+    (snapshot) => delete snapshot.listingVersion,
+  );
+  assert.ok(audit.violationCount > 0);
+  assert.match(formatFleetReport(audit), /marketplace listing is missing/);
+});
+
+test("a lockfile on a marketplace member does not satisfy its version check", () => {
+  const audit = mutatedAudit("minipuft/minipuft-plugins", (snapshot) => {
+    delete snapshot.listingVersion;
+    snapshot.lockVersion = "3.1.1";
+  });
+  assert.match(formatFleetReport(audit), /marketplace listing is missing/);
+});
+
+test("a node-consumer lock behind upstream is still drift", () => {
+  const audit = mutatedAudit(
+    "minipuft/gemini-prompts",
+    (snapshot) => (snapshot.lockVersion = "3.0.0"),
+  );
+  assert.match(formatFleetReport(audit), /claude-prompts lock is 3\.0\.0/);
+});
+
+test("a profile with no declared version source is reported, never skipped", () => {
+  const snapshots = healthySnapshots();
+  const inventedProfile = {
+    ...fleet,
+    repositories: fleet.repositories.map((entry, index) =>
+      index === 0 ? { ...entry, profile: "not-a-profile" } : entry,
+    ),
+  };
+  const audit = auditFleet(inventedProfile, snapshots);
+  assert.match(formatFleetReport(audit), /declares no version source/);
+});
+
+test("every profile in the registry declares a version source", () => {
+  const profiles = JSON.parse(readFileSync("profiles.json", "utf8")).profiles;
+  for (const name of Object.keys(profiles)) {
+    assert.ok(
+      VERSION_SOURCES[name],
+      `profile ${name} has no VERSION_SOURCES entry, so a fleet member using it would be unaudited`,
+    );
+  }
 });
