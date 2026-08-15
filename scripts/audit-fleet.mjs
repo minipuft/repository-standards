@@ -2,7 +2,11 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { auditFleet, formatFleetReport } from "../lib/fleet-drift-auditor.mjs";
+import {
+  auditFleet,
+  formatFleetReport,
+  VERSION_SOURCES,
+} from "../lib/fleet-drift-auditor.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const fleet = JSON.parse(readFileSync(resolve(root, "fleet.json"), "utf8"));
@@ -72,9 +76,16 @@ async function repositorySnapshot(entry, mergeMode) {
     snapshot.nodeVersion = (
       await raw(entry.repository, ".node-version")
     ).trim();
-    const lock = JSON.parse(await raw(entry.repository, "package-lock.json"));
-    snapshot.lockVersion =
-      lock.packages?.["node_modules/claude-prompts"]?.version;
+  }
+  // The version probe is chosen by PROFILE, not by whether the member has a Node floor. A
+  // marketplace listing carries no lockfile, and reading one for it found nothing while the
+  // audit reported green. auditRepository() reports an unmapped profile rather than skipping it,
+  // so a new profile cannot reach production unaudited by omission here.
+  const versionSource = VERSION_SOURCES[entry.profile];
+  if (versionSource) {
+    snapshot[versionSource.field] = versionSource.extract(
+      await raw(entry.repository, versionSource.path),
+    );
   }
   if (entry.renovatePresetVersion) {
     snapshot.renovate = JSON.parse(
