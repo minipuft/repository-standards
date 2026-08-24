@@ -11,11 +11,42 @@ tags: []
 ---
 ```
 
-Exactly four fields, in this order.
+Four required fields, in this order.
 
 - `date` is the plan's creation date, not its last edit.
 - `title` is the document's H1 with dates and file-name noise removed.
 - Adding the block must not change any other content in the file.
+
+## Optional additive fields
+
+These may accompany the required four. Ordering is constrained for the required fields only —
+a scalar placed before the multi-line `tags` list is idiomatic and conforming. They are optional
+everywhere: a repository that does not use them carries none, and a validator must not require
+them.
+
+```yaml
+---
+title: "Human-readable plan title"
+date: 2026-08-02
+status: active
+tracking: https://github.com/OWNER/REPOSITORY/issues/123
+tags: []
+---
+```
+
+| field             | meaning                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `tracking`        | Canonical issue URL for this plan, or `none` when it is deliberately untracked                         |
+| `tracking_reason` | Why it is untracked. Valid **only** with `tracking: none`, and required by it                          |
+| `plan`            | On a companion document (implementation notes, validation log): the filename of the plan it belongs to |
+
+`tracking_reason` vocabulary: `local-only`, `offline`, `provider-unsupported`,
+`issues-disabled`, `operator-opt-out`.
+
+Any field outside the required four and this list is still a violation. The list is additive
+by design — a new optional field is a change to this document, not a local exception, because
+the failure mode of "validators quietly disagree about what is allowed" is what the required
+ordering exists to prevent.
 
 ## Status vocabulary
 
