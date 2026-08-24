@@ -5,6 +5,20 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.4.0](https://github.com/minipuft/repository-standards/compare/v1.3.0...v1.4.0) (2026-08-24)
+
+
+### Added
+
+* **audit:** report a repository that resolves only through a rename redirect ([#14](https://github.com/minipuft/repository-standards/issues/14)) ([6442a45](https://github.com/minipuft/repository-standards/commit/6442a45210a60e55dc4276ae5df9e82a8483f5ca))
+
+
+### Fixed
+
+* **audit:** compare every fleet member's version, not just the ones with a Node floor ([#12](https://github.com/minipuft/repository-standards/issues/12)) ([b83da02](https://github.com/minipuft/repository-standards/commit/b83da0233eff29c61b2a569699fadb4a2f950ed6))
+* **audit:** count a red required check on main as fleet drift ([#13](https://github.com/minipuft/repository-standards/issues/13)) ([6c02d8c](https://github.com/minipuft/repository-standards/commit/6c02d8c6eadbb57b8bc1857c2f0304e39f69ba99))
+* **ci:** let the changelog generator own its own formatting ([#19](https://github.com/minipuft/repository-standards/issues/19)) ([f126b13](https://github.com/minipuft/repository-standards/commit/f126b13b9958050e5a8cc7b1cbfff6273593c5a3))
+
 ## 1.3.0
 
 - Validate every marketplace entry, and let a ref-tracked entry omit its version.
