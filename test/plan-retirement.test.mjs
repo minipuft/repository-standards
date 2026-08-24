@@ -128,6 +128,36 @@ test("a done plan with an inbound citation is a hard failure", (t) => {
   assert.match(result.stderr, /cited by docs\/guide\.md/);
 });
 
+test("a reference plan filed outside plans/reference/ is a hard failure", (t) => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(root, "plans", "misfiled.md"),
+    frontmatter("reference"),
+  );
+
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /`status: reference` but filed outside/);
+  assert.match(result.stderr, /misfiled\.md/);
+});
+
+test("a pending archive queue is reported but does not fail", (t) => {
+  // The asymmetry is deliberate and worth pinning: the archive queue drains at the next
+  // release, so failing on its existence would be red almost always. A relocation waits on
+  // no event, which is why the case above fails and this one does not.
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(root, "plans", "finished.md"),
+    frontmatter("done"),
+  );
+
+  const result = run(root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /queued for archive/);
+});
+
 test("apply refuses an archive destination that is not gitignored", (t) => {
   const root = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

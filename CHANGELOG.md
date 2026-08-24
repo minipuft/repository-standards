@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Fail `retire-done-plans` when a `status: reference` plan is filed outside `plans/reference/`.
+  The relocation was already detected, but printed under an `OK` banner and exited 0, so a
+  misfiled reference plan stayed misfiled with every consumer's check green. Unlike the archive
+  queue — which drains at the next release and so must not fail on existence — nothing drains a
+  relocation. `--apply` behaviour and the orphaned-reference advisory are unchanged.
+
 ## 1.2.0
 
 - Add the portable `retire-done-plans` executable and consumer configuration schema.

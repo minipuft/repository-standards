@@ -25,9 +25,16 @@
  * document, which is why `--check` fails on a `done` plan that has an inbound link: that plan
  * is misclassified and belongs at `reference`, not in the archive.
  *
- * That is the whole gate. It does NOT fail merely because the queue is non-empty — `done`
- * plans exist legitimately between releases, and a check that fired on their existence
- * would be red almost always and therefore ignored.
+ * The `done` queue itself is not a failure: `done` plans exist legitimately between releases,
+ * and a check that fired on their existence would be red almost always and therefore ignored.
+ * They drain at the next release, which is the event that empties them.
+ *
+ * A pending `reference` RELOCATION is different, and does fail. Nothing drains it — no release,
+ * no scheduled step, nothing. A `reference` plan sitting outside plans/reference/ is not work
+ * queued for a future event; it is a file in the wrong place, and reporting it as OK meant it
+ * stayed there indefinitely while the check stayed green. Destination is a pure function of
+ * status, so there is no judgement here for the author to own and nothing for the script to
+ * be wrong about.
  *
  * Usage (run from a consuming repository):
  *   retire-done-plans                 # check: report the queue, fail on misclassification
@@ -846,11 +853,71 @@ function selfTest() {
       "modified plan not flagged by the archive guard",
     );
 
+    /*
+     * 8. A misfiled `reference` plan FAILS the check; a correctly filed one passes.
+     *
+     * This asserts the exit code through a real subprocess rather than calling collect(),
+     * because the defect being guarded was never in the classification — `relocations` was
+     * always populated correctly. It was in the reporting: the pending move printed under an
+     * "OK" banner and returned exit 0, so every consumer's CI stayed green while the plan sat
+     * in the wrong directory indefinitely. Only the process exit code shows that.
+     *
+     * The `done` assertion runs in the same repository to pin the deliberate asymmetry: an
+     * archive queue is work waiting on the next release and must NOT fail, while a relocation
+     * waits on nothing.
+     */
+    const exitRepo = path.join(sandbox, "exit-repo");
+    fs.mkdirSync(path.join(exitRepo, "plans", "features"), { recursive: true });
+    fs.mkdirSync(path.join(exitRepo, "docs"), { recursive: true });
+    fs.writeFileSync(
+      path.join(exitRepo, CONFIG_FILENAME),
+      JSON.stringify({ linkSources: ["docs", "plans"] }),
+    );
+    fs.writeFileSync(path.join(exitRepo, "docs", "readme.md"), "seed\n");
+    const misfiled = path.join(exitRepo, "plans", "features", "misfiled.md");
+    fs.writeFileSync(misfiled, fm("reference"));
+
+    const runCheck = () => {
+      const result = require("child_process").spawnSync(
+        process.execPath,
+        [__filename, "--repo", exitRepo],
+        { encoding: "utf8" },
+      );
+      return result.status;
+    };
+
+    assert(
+      runCheck() === 1,
+      "a `reference` plan outside plans/reference/ did not fail the check",
+    );
+
+    fs.mkdirSync(path.join(exitRepo, "plans", REFERENCE_DIRNAME), {
+      recursive: true,
+    });
+    fs.renameSync(
+      misfiled,
+      path.join(exitRepo, "plans", REFERENCE_DIRNAME, "misfiled.md"),
+    );
+    assert(
+      runCheck() === 0,
+      "a correctly filed `reference` plan did not pass the check",
+    );
+
+    fs.writeFileSync(
+      path.join(exitRepo, "plans", "features", "finished.md"),
+      fm("done"),
+    );
+    assert(
+      runCheck() === 0,
+      "a pending archive queue must not fail the check — it drains at the next release",
+    );
+
     console.log(
       "retire-done-plans self-test OK — validates frontmatter, detects an inbound citation, " +
         "re-bases a relative link for the added archive depth, follows a co-moving target " +
         "whether or not the citation carries a ./ prefix, leaves URLs and absolute paths " +
-        "alone, and refuses to archive an uncommitted plan.",
+        "alone, refuses to archive an uncommitted plan, fails a `reference` plan filed outside " +
+        `plans/${REFERENCE_DIRNAME}/, and still passes a pending archive queue.`,
     );
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
@@ -965,17 +1032,25 @@ function main() {
       );
       for (const { rel } of queue) console.log(`  ${rel}`);
       console.log("");
+      console.log(
+        "Run with --apply to move them; consumers may also invoke this from a release workflow.",
+      );
     }
     if (relocations.length > 0) {
-      console.log(
-        `retire-done-plans OK — ${relocations.length} plan(s) queued for plans/${REFERENCE_DIRNAME}/:\n`,
+      if (queue.length > 0) console.log("");
+      console.error(
+        `[retire-done-plans] \`status: reference\` but filed outside plans/${REFERENCE_DIRNAME}/:\n`,
       );
-      for (const { rel } of relocations) console.log(`  ${rel}`);
-      console.log("");
+      for (const { rel } of relocations) console.error(`  ${rel}`);
+      console.error(
+        `\nA reference plan's destination is decided by its status, so this is a file in the wrong\n` +
+          `place rather than work waiting on an event. Nothing drains it: the archive queue empties\n` +
+          `at the next release, but a misfiled reference plan stays put for as long as the check\n` +
+          `reports it as OK. Run --apply, or correct the status if the plan is not reference:\n` +
+          "https://github.com/minipuft/repository-standards/blob/main/conventions/plan-frontmatter.md",
+      );
+      process.exitCode = 1;
     }
-    console.log(
-      "Run with --apply to move them; consumers may also invoke this from a release workflow.",
-    );
     return;
   }
 

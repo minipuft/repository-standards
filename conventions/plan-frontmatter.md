@@ -57,10 +57,23 @@ A consumer that automates retirement:
    break the citing document.
 3. Moves the rest into `plans/archive/`, preserving each subpath and re-basing relative links for
    the added directory depth.
+4. Selects `status: reference` plans outside `plans/reference/`, and **fails on their existence**.
+   Moves them into `plans/reference/` under `--apply`.
 
-Step 2 is the whole gate. It does not fail because the queue is non-empty: `done` plans exist
-legitimately between releases, and a check that fired on their existence would be red almost
-always and therefore ignored.
+Step 2 is the gate on the archive queue. It does not fail because that queue is non-empty: `done`
+plans exist legitimately between releases, and a check that fired on their existence would be red
+almost always and therefore ignored. The release is what drains it.
+
+**Step 4 does fail on existence, and the difference is that nothing drains it.** A `reference`
+plan outside `plans/reference/` is not work waiting on a scheduled event — there is no event. It
+is a file in the wrong directory, and its correct directory is a pure function of its status, so
+no judgement is being taken away from the author. Reporting it as OK is what lets it stay
+misfiled: measured 2026-08-23, a finished plan reached `reference` and stayed in `plans/features/`
+with the check green, because a pending relocation printed under an `OK` banner and exited 0.
+
+A consumer must not infer status from a plan's contents. Whether every task row is terminal is not
+readable from frontmatter, so a finished plan still marked `active` is invisible to this contract
+by design — closing it out is the authoring session's job, not the retirement tool's.
 
 **Link sources are configured, never defaulted.** The scan answering "does anything point at
 this?" is worth exactly what the directory list it reads is worth. A repository whose layout does
