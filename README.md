@@ -110,6 +110,13 @@ check is **required**; the check-runs on `main` answer whether it **passed**. Bo
 
 Tags are immutable. Contract-breaking changes require a new major. Compatible validation additions require a minor; fixes require a patch. If a release is defective, publish a new tag and update each caller by PR rather than moving an existing tag.
 
+Releases are cut by Release Please from Conventional Commits: it opens a release PR that
+carries the `package.json` bump and the `CHANGELOG.md` entry together, and tags on merge.
+Do not hand-edit the version or hand-write a released entry. Releasing was previously a
+manual bump whose changelog step was silently optional, and `1.2.1` and `1.3.0` both shipped
+undocumented as a result — a consumer pinning a tag could not see what it was adopting.
+Their entries were reconstructed from their tag ranges on 2026-08-24 and are marked as such.
+
 Remove a required context before reverting the workflow that emits it. Do not restore competing product-version writers as rollback.
 
 The scheduled fleet audit may read public files without a secret. Reading branch-protection metadata across repositories typically requires a fine-grained `FLEET_AUDIT_TOKEN` with read-only Administration access to the registered repositories. The audit token is never used for mutation; the repository-scoped `github.token` updates only the standards dashboard issue.
