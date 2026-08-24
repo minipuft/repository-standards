@@ -1,0 +1,29 @@
+name: Release Please
+
+# Version, tag, and CHANGELOG are derived from Conventional Commits so they cannot
+# disagree. They did: 1.2.1 and 1.3.0 each shipped as a lone `package.json` bump with
+# no CHANGELOG entry, because releasing was a manual two-step whose second step was
+# silently optional. Consumers pin this repository by tag, so a tag whose contents are
+# undocumented is a version nobody can reason about before adopting it.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # github.token is sufficient here: nothing in this repository is triggered by a
+          # release. Consumers adopt a new tag by PR, which the fleet audit surfaces.
+          token: ${{ github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
