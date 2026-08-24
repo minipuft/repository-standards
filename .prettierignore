@@ -1,0 +1,6 @@
+# Release Please owns CHANGELOG.md from 1.4.0 onward: it writes the entry, the compare
+# link and the heading structure, and it rewrites the file on every release PR. Prettier
+# reflows that output, so the two disagree and the release PR fails its own required
+# check — with no author able to fix it, because the next regeneration undoes the fix.
+# A generator-owned artifact is ignored here rather than formatted.
+CHANGELOG.md
