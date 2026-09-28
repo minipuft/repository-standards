@@ -188,7 +188,9 @@ function selfTest() {
   writeFileSync(badFile, "## Summary\n\nNo other sections.\n");
 
   const authored = MIRRORED_CI_STEPS.filter((step) => step.needsAuthoredInput);
-  const goodTitle = "ci(scripts): mirror every pr-conventions gate locally";
+  // No scope on purpose: scopes are the consumer's own answer (scope-enum), and
+  // the managed rules set scope-empty to 0 (allowed), so this stays valid everywhere.
+  const goodTitle = "ci: mirror every pr-conventions gate locally";
   const badTitle = "CI: Mirror Every Gate";
 
   const cases = [
