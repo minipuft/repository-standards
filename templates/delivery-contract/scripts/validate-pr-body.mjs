@@ -71,12 +71,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * Fallback required-section names, used only when this checkout has no
+ * `.github/pull_request_template.md` to derive them from (see `deriveRequiredSections` below).
+ * Kept exported and unchanged for any consumer still relying on the constant directly.
+ */
 export const REQUIRED_SECTIONS = [
   "Summary",
   "How it was verified",
   "Notes for Reviewers",
 ];
 export const DEMONSTRATION_SECTION = "Demonstration";
+export const STILL_OPEN_SECTION = "Still open";
 export const DEMONSTRATION_TYPES = new Set(["feat", "fix", "perf", "refactor"]);
 export const WORD_BUDGET = 400;
 /** Non-final plan statuses; anything else (reference, done, complete, closed…) is final. */
@@ -300,15 +306,74 @@ function aboveTheFoldWords(body) {
   return visible.split(/\s+/).filter((w) => w.length > 0).length;
 }
 
-function checkRequiredSections(sections, failures) {
-  for (const name of REQUIRED_SECTIONS) {
+/**
+ * The `## ` headings declared by `<repoRoot>/.github/pull_request_template.md` (or
+ * `templatePath`, for tests), each paired with the text of its own `<!-- -->` guidance block —
+ * the same block `pr-body.mjs`'s `fill()` inserts content beneath. `null` when no template file
+ * exists at this checkout, which signals the caller to fall back to the historical constants.
+ *
+ * The template file is the SSOT for what a body must carry (see `pr-body.mjs`'s header comment);
+ * this is the validator reading that same SSOT instead of hardcoding a second copy of it.
+ */
+function readTemplateHeadings(repoRoot, templatePath) {
+  const resolved =
+    templatePath ?? path.join(repoRoot, ".github", "pull_request_template.md");
+  if (!existsSync(resolved)) return null;
+
+  const lines = readFileSync(resolved, "utf8").split("\n");
+  const marks = [];
+  lines.forEach((line, index) => {
+    const match = /^##\s+(.*?)\s*$/.exec(line);
+    if (match) marks.push({ name: match[1], index });
+  });
+  if (marks.length === 0) return null;
+
+  const comments = new Map();
+  marks.forEach(({ name, index }, i) => {
+    const next = marks[i + 1]?.index ?? lines.length;
+    const block = lines.slice(index + 1, next).join("\n");
+    comments.set(name, /<!--([\s\S]*?)-->/.exec(block)?.[1] ?? "");
+  });
+
+  return { names: marks.map((m) => m.name), comments };
+}
+
+/**
+ * Required section names for this checkout: every `## ` heading in the template EXCEPT the ones
+ * this contract calls optional —
+ *   `Demonstration` — required only for certain commit types (checked separately below)
+ *   `Still open`    — informational, never gated on non-empty
+ *   any heading whose own comment block contains the token `optional` (case-insensitive) — a
+ *     fork's template opts a section out by writing that word into its own `<!-- -->` guidance
+ *
+ * Falls back to `REQUIRED_SECTIONS` when no template exists at this checkout (`templateHeadings`
+ * is `null`) — the pre-derivation baseline shared by every consumer before headings became
+ * per-repo.
+ */
+function deriveRequiredSections(templateHeadings) {
+  if (templateHeadings === null) return REQUIRED_SECTIONS;
+  return templateHeadings.names.filter((name) => {
+    if (name === DEMONSTRATION_SECTION || name === STILL_OPEN_SECTION)
+      return false;
+    return !/optional/i.test(templateHeadings.comments.get(name) ?? "");
+  });
+}
+
+function checkRequiredSections(sections, failures, requiredSections) {
+  for (const name of requiredSections) {
     if (!(name in sections)) failures.push(`missing section \`## ${name}\``);
     else if (isEmpty(sections[name]))
       failures.push(`section \`## ${name}\` is present but empty`);
   }
 }
 
-function checkDemonstration(sections, title, failures) {
+function checkDemonstration(
+  sections,
+  title,
+  failures,
+  hasDemonstrationHeading,
+) {
+  if (!hasDemonstrationHeading) return;
   const type = commitType(title);
   if (type === null || !DEMONSTRATION_TYPES.has(type)) return;
   const section = sections[DEMONSTRATION_SECTION];
@@ -329,7 +394,8 @@ function checkPlaceholders(body, failures) {
   }
 }
 
-function checkVerificationRows(sections, failures) {
+function checkVerificationRows(sections, failures, hasVerifiedHeading) {
+  if (!hasVerifiedHeading) return;
   const verified = sections["How it was verified"];
   if (isEmpty(verified)) return;
   for (const line of verified.split("\n")) {
@@ -584,12 +650,20 @@ export function checkBody(body, title, options = {}) {
     options.readPlanAtMergeBase ??
     ((relPath) => planAtMergeBase(repoRoot, relPath));
   const adrDir = options.adrDir ?? defaultAdrDir(repoRoot);
+  const templateHeadings = readTemplateHeadings(repoRoot, options.templatePath);
+  const requiredSections = deriveRequiredSections(templateHeadings);
+  const hasDemonstrationHeading =
+    templateHeadings === null ||
+    templateHeadings.names.includes(DEMONSTRATION_SECTION);
+  const hasVerifiedHeading =
+    templateHeadings === null ||
+    templateHeadings.names.includes("How it was verified");
   const sections = splitSections(body);
   const failures = [];
-  checkRequiredSections(sections, failures);
-  checkDemonstration(sections, title, failures);
+  checkRequiredSections(sections, failures, requiredSections);
+  checkDemonstration(sections, title, failures, hasDemonstrationHeading);
   checkPlaceholders(body, failures);
-  checkVerificationRows(sections, failures);
+  checkVerificationRows(sections, failures, hasVerifiedHeading);
   checkPlanFooter(body, failures, repoRoot, readPlanAtMergeBase);
   checkInitiativeTrailer(body, failures);
   checkDecisionTrailer(body, failures, repoRoot, adrDir);
@@ -735,6 +809,14 @@ function fixtureBaseReader(relPath) {
   const base = PLAN_FIXTURES[relPath]?.[1];
   if (base === undefined || base === null) return { text: null };
   return typeof base === "string" ? { text: base } : base;
+}
+
+/** Writes `content` to a temp file and returns its path — a `templatePath` fixture. */
+function writeTempTemplate(content) {
+  const dir = mkdtempSync(path.join(tmpdir(), "pr-body-template-"));
+  const file = path.join(dir, "pull_request_template.md");
+  writeFileSync(file, content);
+  return file;
 }
 
 function selfTest() {
@@ -964,6 +1046,59 @@ function selfTest() {
         r.failures.some((f) => f.includes("does not exist")) &&
         r.failures.some((f) => f.includes("0008")),
     },
+    // --- Template-derived required sections (a fork's own headings) ---
+    {
+      name: "a fork template's three headings become required, replacing the constants",
+      body: "## What Changed\n\nRewired the widget.\n\n## Why\n\nThe old one broke.\n\n## Checklist\n\n- [x] done\n",
+      title: "feat(widget): x",
+      templatePath: writeTempTemplate(
+        "## What Changed\n\n<!-- what changed -->\n\n## Why\n\n<!-- why -->\n\n## Checklist\n\n<!-- checklist -->\n",
+      ),
+      expect: noFail,
+    },
+    {
+      name: "a body missing a fork template heading fails, and `Summary` is not demanded",
+      body: "## What Changed\n\nRewired the widget.\n\n## Checklist\n\n- [x] done\n",
+      title: "feat(widget): x",
+      templatePath: writeTempTemplate(
+        "## What Changed\n\n<!-- what changed -->\n\n## Why\n\n<!-- why -->\n\n## Checklist\n\n<!-- checklist -->\n",
+      ),
+      expect: (r) =>
+        r.failures.some((f) => f.includes("Why")) &&
+        !r.failures.some((f) => f.includes("Summary")),
+    },
+    {
+      name: "a template with no Demonstration heading does not demand one for a feat title",
+      body: "## What Changed\n\nRewired the widget.\n\n## Why\n\nThe old one broke.\n\n## Checklist\n\n- [x] done\n",
+      title: "feat(widget): x",
+      templatePath: writeTempTemplate(
+        "## What Changed\n\n<!-- what changed -->\n\n## Why\n\n<!-- why -->\n\n## Checklist\n\n<!-- checklist -->\n",
+      ),
+      expect: (r) => !r.failures.some((f) => f.includes("Demonstration")),
+    },
+    {
+      name: "a heading marked optional in its own comment block is not required",
+      body: "## What Changed\n\nRewired the widget.\n\n## Why\n\nThe old one broke.\n",
+      title: "feat(widget): x",
+      templatePath: writeTempTemplate(
+        "## What Changed\n\n<!-- what changed -->\n\n## Why\n\n<!-- why -->\n\n## Checklist\n\n<!-- optional: skip for docs-only changes -->\n",
+      ),
+      expect: noFail,
+    },
+    {
+      name: "no template at this checkout falls back to the four core names",
+      body: filled,
+      title: "feat(chains): x",
+      templatePath: path.join(root, "no-such-template.md"),
+      expect: noFail,
+    },
+    {
+      name: "no template at this checkout still fails a body missing a core name",
+      body: filled.replace(/## Summary[\s\S]*?(?=## Demonstration)/, ""),
+      title: "feat(chains): x",
+      templatePath: path.join(root, "no-such-template.md"),
+      expect: (r) => r.failures.some((f) => f.includes("Summary")),
+    },
   ];
   let failed = 0;
   for (const c of cases) {
@@ -971,6 +1106,7 @@ function selfTest() {
       repoRoot: root,
       readPlanAtMergeBase: fixtureBaseReader,
       adrDir: "docs/adr",
+      templatePath: c.templatePath,
     });
     const ok = c.expect(result);
     console.log(`${ok ? "PASS" : "FAIL"}  ${c.name}`);
@@ -1018,6 +1154,9 @@ function main() {
     : (process.env.PR_BODY ?? "");
   const title = readArg("--title") ?? process.env.PR_TITLE ?? "";
   const { failures, warnings } = checkBody(body, title);
+  const requiredCount = deriveRequiredSections(
+    readTemplateHeadings(REPO_ROOT),
+  ).length;
   const ci = process.env.GITHUB_ACTIONS === "true";
 
   for (const w of warnings)
@@ -1032,7 +1171,7 @@ function main() {
     process.exit(1);
   }
   console.log(
-    `PR body: ${REQUIRED_SECTIONS.length} required sections present, ` +
+    `PR body: ${requiredCount} required sections present, ` +
       `${warnings.length === 0 ? "no warnings" : `${warnings.length} warning(s)`}.`,
   );
 }
