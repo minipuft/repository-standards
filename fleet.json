@@ -18,7 +18,7 @@
       "mergeMode": "auto",
       "renovatePresetVersion": "v1.0.1",
       "dependencyAutomation": "renovate",
-      "deliveryContract": false
+      "deliveryContract": true
     },
     {
       "repository": "minipuft/opencode-prompts",
@@ -35,7 +35,7 @@
       "mergeMode": "auto",
       "renovatePresetVersion": "v1.0.1",
       "dependencyAutomation": "renovate",
-      "deliveryContract": false
+      "deliveryContract": true
     },
     {
       "repository": "minipuft/minipuft-plugins",
@@ -48,7 +48,7 @@
       "mergeMode": "auto",
       "renovatePresetVersion": null,
       "dependencyAutomation": "none",
-      "deliveryContract": false
+      "deliveryContract": true
     },
     {
       "repository": "minipuft/codex-prompts",
@@ -61,7 +61,25 @@
       "mergeMode": "auto",
       "renovatePresetVersion": null,
       "dependencyAutomation": "none",
-      "deliveryContract": false
+      "deliveryContract": true
+    },
+    {
+      "repository": "minipuft/claude-prompts-mcp",
+      "repositoryId": 941652610,
+      "deliveryContract": true,
+      "consumerContract": false
+    },
+    {
+      "repository": "minipuft/cloudySky",
+      "repositoryId": 1383037812,
+      "deliveryContract": true,
+      "consumerContract": false
+    },
+    {
+      "repository": "minipuft/t3code",
+      "repositoryId": 1341612602,
+      "deliveryContract": true,
+      "consumerContract": false
     }
   ]
 }

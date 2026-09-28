@@ -14,6 +14,19 @@ const schema = JSON.parse(readFileSync("contracts/fleet.schema.json", "utf8"));
 function healthySnapshots() {
   const repositories = {};
   for (const entry of fleet.repositories) {
+    // A healthy repository answers to its own name AND its pinned id. Defaulting both to the
+    // declared values keeps the fixture honest: every case below sets its divergence explicitly.
+    const identity = { id: entry.repositoryId, fullName: entry.repository };
+    // A healthy fixture answers the `deliveryContract` expectation it was declared with:
+    // present when expected, absent otherwise. Every divergence below sets this explicitly,
+    // the same discipline the identity and version fixtures above already follow.
+    const delivery = entry.deliveryContract
+      ? { present: true, templateVersion: "1.4.0" }
+      : { present: false, templateVersion: null };
+    if (entry.consumerContract === false) {
+      repositories[entry.repository] = { identity, delivery, mergeMode: null };
+      continue;
+    }
     repositories[entry.repository] = {
       contract: {
         profile: entry.profile,
@@ -26,9 +39,7 @@ function healthySnapshots() {
       ),
       mergeMode: entry.mergeMode,
       nodeVersion: entry.nodeMajor,
-      // A healthy repository answers to its own name AND its pinned id. Defaulting both to the
-      // declared values keeps the fixture honest: every case below sets its divergence explicitly.
-      identity: { id: entry.repositoryId, fullName: entry.repository },
+      identity,
       // Keyed by the profile's declared version source, not hardcoded to `lockVersion`. A fixture
       // that always set `lockVersion` would keep passing for a marketplace member whose real
       // version lives in its listing — the fixture would be asserting the defect.
@@ -41,12 +52,7 @@ function healthySnapshots() {
           }
         : undefined,
       dependabotPresent: entry.dependencyAutomation === "migrating",
-      // A healthy fixture answers the `deliveryContract` expectation it was declared with:
-      // present when expected, absent otherwise. Every divergence below sets this explicitly,
-      // the same discipline the identity and version fixtures above already follow.
-      delivery: entry.deliveryContract
-        ? { present: true, templateVersion: "1.4.0" }
-        : { present: false, templateVersion: null },
+      delivery,
     };
   }
   return {
@@ -414,17 +420,74 @@ test("a delivery contract expected but missing is drift", () => {
 test("a delivery contract present when not expected is a note, not drift", () => {
   const target = fleet.repositories[0].repository;
   const snapshots = healthySnapshots();
+  const withoutDelivery = withDeliveryExpectation(target, false);
   snapshots.repositories[target].delivery = {
     present: true,
     templateVersion: "1.4.0",
   };
-  // `fleet` itself declares `deliveryContract: false` for every current member, so this exercises
-  // the "not expected" branch directly, with no override needed.
-  const audit = auditFleet(fleet, snapshots);
+  const audit = auditFleet(withoutDelivery, snapshots);
   assert.equal(audit.violationCount, 0);
   assert.match(
     formatFleetReport(audit),
     /delivery contract is present at template version 1\.4\.0 though this repository is not declared to carry one/,
   );
   assert.match(formatFleetReport(audit), /Delivery: -/);
+});
+
+// The motivating defect: a private repo (or any 401/403/unreadable response) answers "the probe
+// never reached the file", not "the file is absent". Grading it as missing would report a
+// private repository as out of compliance for a reason that has nothing to do with compliance.
+test("an unreadable delivery-contract probe (private repo) is a note, not drift", () => {
+  const target = fleet.repositories.find(
+    (entry) => entry.consumerContract === false,
+  ).repository;
+  const audit = mutatedAudit(target, (snapshot) => {
+    snapshot.delivery = {
+      present: false,
+      templateVersion: null,
+      unexplained: "403 Forbidden",
+    };
+  });
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /Note: delivery contract presence could not be verified: 403 Forbidden/,
+  );
+  assert.match(formatFleetReport(audit), /Delivery: unverified/);
+});
+
+// t3code's default branch is `custom/main`, not `main`. The fixture asserts the auditor grades
+// whatever the snapshot reports as present — the branch-resolution work itself lives in
+// scripts/audit-fleet.mjs (identity.defaultBranch feeds the delivery-contract fetch ref), so this
+// is the auditor-side half: a delivery contract read from a non-`main` default branch is graded
+// exactly like one read from `main`, not silently dropped.
+test("a delivery contract read from a non-main default branch is graded normally", () => {
+  const target = "minipuft/t3code";
+  const entryExists = fleet.repositories.some(
+    (entry) => entry.repository === target,
+  );
+  assert.ok(entryExists, "fixture expects minipuft/t3code in fleet.json");
+  const audit = mutatedAudit(target, (snapshot) => {
+    snapshot.delivery = { present: true, templateVersion: "1.7.0" };
+  });
+  const target_ = audit.results.find((result) => result.repository === target);
+  assert.equal(
+    target_.violations.length,
+    0,
+    JSON.stringify(target_.violations),
+  );
+  assert.match(formatFleetReport(audit), /Delivery: 1\.7\.0/);
+});
+
+// `consumerContract: false` marks a member audited for the delivery contract only. It must not
+// be reported as drifted for lacking `downstream-contract.json`, a caller workflow, required
+// checks, or a Renovate/Dependabot posture it never claimed to carry.
+test("a fleet entry with consumerContract: false skips consumer-contract checks", () => {
+  const target = fleet.repositories.find(
+    (entry) => entry.consumerContract === false,
+  ).repository;
+  const audit = auditFleet(fleet, healthySnapshots());
+  const result = audit.results.find((entry) => entry.repository === target);
+  assert.equal(result.violations.length, 0, JSON.stringify(result.violations));
+  assert.match(result.notes.join("\n"), /consumer contract checks skipped/);
 });

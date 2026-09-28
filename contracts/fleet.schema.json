@@ -28,18 +28,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "repository",
-          "repositoryId",
-          "profile",
-          "standardsRef",
-          "requiredChecks",
-          "nodeMajor",
-          "claudePromptsWriter",
-          "mergeMode",
-          "renovatePresetVersion",
-          "dependencyAutomation"
-        ],
+        "required": ["repository", "repositoryId"],
         "properties": {
           "repository": { "$ref": "#/definitions/repository" },
           "repositoryId": { "$ref": "#/definitions/repositoryId" },
@@ -64,7 +53,28 @@
           "deliveryContract": {
             "type": "boolean",
             "description": "whether the repo is expected to carry `.delivery-contract.json`"
+          },
+          "consumerContract": {
+            "type": "boolean",
+            "description": "whether the repo is expected to carry `downstream-contract.json` and be audited as a claude-prompts consumer (profile, standardsRef, requiredChecks, nodeMajor, claudePromptsWriter, mergeMode, renovatePresetVersion, dependencyAutomation). Defaults to true — omit only when the repo genuinely has no consumer contract, e.g. it is audited solely for the delivery contract."
           }
+        },
+        "if": {
+          "properties": { "consumerContract": { "const": false } },
+          "required": ["consumerContract"]
+        },
+        "then": {},
+        "else": {
+          "required": [
+            "profile",
+            "standardsRef",
+            "requiredChecks",
+            "nodeMajor",
+            "claudePromptsWriter",
+            "mergeMode",
+            "renovatePresetVersion",
+            "dependencyAutomation"
+          ]
         }
       }
     }
