@@ -5,6 +5,13 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.8.0](https://github.com/minipuft/repository-standards/compare/v1.7.0...v1.8.0) (2026-09-28)
+
+
+### Added
+
+* **audit:** the fleet audit reads each repo's delivery contract at its default branch ([#28](https://github.com/minipuft/repository-standards/issues/28)) ([05d3092](https://github.com/minipuft/repository-standards/commit/05d3092a97430c928ef798411ab5106c69d5aba3))
+
 ## [1.7.0](https://github.com/minipuft/repository-standards/compare/v1.6.1...v1.7.0) (2026-09-28)
 
 
