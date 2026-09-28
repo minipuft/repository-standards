@@ -40,7 +40,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,59 @@ const REPO_ROOT = path.resolve(
   "..",
 );
 const VALIDATOR = path.join(REPO_ROOT, "scripts", "validate-pr-body.mjs");
+
+/**
+ * The `commitlint` exec prefix and install-remediation hint per `answers.packageManager`, mirrored
+ * from `bin/delivery-contract.cjs`'s `PACKAGE_MANAGER_DERIVED` (`{{pmExec}}` renders the workflow's
+ * copy; this is the same choice made for the local script, which has no placeholder to render
+ * into — it reads the consumer's own answer at run time instead).
+ */
+const EXEC_PREFIX_BY_PACKAGE_MANAGER = {
+  npm: ["npx", "--no", "--"],
+  pnpm: ["pnpm", "exec"],
+  bun: ["bunx"],
+};
+const INSTALL_HINT_BY_PACKAGE_MANAGER = {
+  npm: "npm install",
+  pnpm: "pnpm install",
+  bun: "bun install",
+};
+
+/**
+ * Walks up from `startDir` to find `.delivery-contract.json` — the consumer's own answers file —
+ * rather than assuming it sits exactly at `REPO_ROOT`. Returns null when none is found (an
+ * uninstalled contract, or a checkout laid out unusually); callers fall back to npm in that case,
+ * the same default `resolveAnswers` uses when a consumer has not yet chosen.
+ */
+function findConsumerRoot(startDir) {
+  let dir = startDir;
+  for (;;) {
+    if (existsSync(path.join(dir, ".delivery-contract.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function consumerPackageManager() {
+  const consumerRoot = findConsumerRoot(
+    path.dirname(fileURLToPath(import.meta.url)),
+  );
+  if (!consumerRoot) return "npm";
+  try {
+    const document = JSON.parse(
+      readFileSync(path.join(consumerRoot, ".delivery-contract.json"), "utf8"),
+    );
+    const packageManager = document.answers?.packageManager;
+    return packageManager in EXEC_PREFIX_BY_PACKAGE_MANAGER
+      ? packageManager
+      : "npm";
+  } catch {
+    // A malformed or unreadable answers file is not this script's job to diagnose — every other
+    // subcommand already validates it against the schema. Fall back rather than throw here.
+    return "npm";
+  }
+}
 
 /**
  * One entry per gating step in `.github/workflows/pr-conventions.yml`.
@@ -92,23 +145,27 @@ export const MIRRORED_CI_STEPS = [
     label: "title passes commitlint.config.mjs",
     needsAuthoredInput: true,
     run: ({ title }) => {
-      // An absent binary and a rejected title both exit non-zero through `npx`, and conflating
-      // them would make this step's failure mean two different things — one of which the author
-      // cannot act on from the message. CI installs before it lints; a developer tree may not
-      // have. Not knowing is reported as a failure, never as a pass: an unchecked title is the
-      // exact hole this script exists to close.
+      // An absent binary and a rejected title both exit non-zero through the exec prefix, and
+      // conflating them would make this step's failure mean two different things — one of which
+      // the author cannot act on from the message. CI installs before it lints; a developer tree
+      // may not have. Not knowing is reported as a failure, never as a pass: an unchecked title is
+      // the exact hole this script exists to close. `node_modules/.bin/commitlint` is the same
+      // probe path for every package manager — pnpm and bun both populate it.
       if (
         !existsSync(path.join(REPO_ROOT, "node_modules", ".bin", "commitlint"))
       ) {
+        const packageManager = consumerPackageManager();
         return {
           status: 1,
           stdout:
             "commitlint is not installed at the repo root, so THE TITLE WAS NOT CHECKED.\n" +
-            "Install it and re-run:\n  npm install",
+            `Install it and re-run:\n  ${INSTALL_HINT_BY_PACKAGE_MANAGER[packageManager]}`,
           stderr: "",
         };
       }
-      return spawnSync("npx", ["--no", "--", "commitlint", "--verbose"], {
+      const [command, ...args] =
+        EXEC_PREFIX_BY_PACKAGE_MANAGER[consumerPackageManager()];
+      return spawnSync(command, [...args, "commitlint", "--verbose"], {
         cwd: REPO_ROOT,
         input: `${title}\n`,
         encoding: "utf8",
@@ -171,28 +228,79 @@ export function runSteps({ bodyFile, title, steps = MIRRORED_CI_STEPS }) {
  * own. Asserts failure, not just a non-zero exit somewhere: each half is driven to red while the
  * other is held green, so a wrapper that ran only one check cannot pass this.
  */
+/**
+ * The default body used when this checkout carries no
+ * `.github/pull_request_template.md` — `validate-pr-body.mjs` falls back to the same
+ * `REQUIRED_SECTIONS` constant in that case, so this fixture is the historical baseline, not a
+ * second SSOT.
+ */
+const DEFAULT_GOOD_BODY = [
+  "## Summary",
+  "",
+  "After this merges, the local PR check runs every gate CI runs.",
+  "",
+  "## Demonstration",
+  "",
+  "n/a: tooling only, no consumer-observable surface.",
+  "",
+  "## How it was verified",
+  "",
+  "| Claim | Probe | Baseline → measured | Mutation that fails it |",
+  "| --- | --- | --- | --- |",
+  "| It runs | `node scripts/pr-check.mjs --self-test` | 0 → 4 steps | drop a step |",
+  "",
+  "## Notes for Reviewers",
+  "",
+  "Distrust the parity test first.",
+  "",
+].join("\n");
+
+/**
+ * Builds a "good" body from the SAME source `validate-pr-body.mjs` reads — a fork that keeps
+ * upstream's PR template with different headings needs a fixture that mirrors it, not the four
+ * default headings, or the self-test fails the body step on a body it invented itself. Falls back
+ * to `DEFAULT_GOOD_BODY` when this checkout has no template.
+ */
+function buildGoodBody(repoRoot) {
+  const templatePath = path.join(
+    repoRoot,
+    ".github",
+    "pull_request_template.md",
+  );
+  if (!existsSync(templatePath)) return DEFAULT_GOOD_BODY;
+
+  const headings = readFileSync(templatePath, "utf8")
+    .split("\n")
+    .map((line) => /^##\s+(.*?)\s*$/.exec(line)?.[1])
+    .filter((name) => name !== undefined);
+  if (headings.length === 0) return DEFAULT_GOOD_BODY;
+
+  const lines = [];
+  for (const name of headings) {
+    lines.push(`## ${name}`, "");
+    if (name === "Demonstration") {
+      lines.push("n/a: self-test fixture");
+    } else if (name === "How it was verified") {
+      lines.push(
+        "| Claim | Probe | Baseline → measured | Mutation that fails it |",
+        "| --- | --- | --- | --- |",
+        "| It runs | `node scripts/pr-check.mjs --self-test` | 0 → 4 steps | drop a step |",
+      );
+    } else if (name === "Still open") {
+      lines.push("None");
+    } else {
+      lines.push(
+        `Filled for the self-test fixture — see \`## ${name}\` in the template.`,
+      );
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 function selfTest() {
   const scratch = mkdtempSync(path.join(tmpdir(), "pr-check-"));
-  const goodBody = [
-    "## Summary",
-    "",
-    "After this merges, the local PR check runs every gate CI runs.",
-    "",
-    "## Demonstration",
-    "",
-    "n/a: tooling only, no consumer-observable surface.",
-    "",
-    "## How it was verified",
-    "",
-    "| Claim | Probe | Baseline → measured | Mutation that fails it |",
-    "| --- | --- | --- | --- |",
-    "| It runs | `node scripts/pr-check.mjs --self-test` | 0 → 4 steps | drop a step |",
-    "",
-    "## Notes for Reviewers",
-    "",
-    "Distrust the parity test first.",
-    "",
-  ].join("\n");
+  const goodBody = buildGoodBody(REPO_ROOT);
   const goodFile = path.join(scratch, "good.md");
   const badFile = path.join(scratch, "bad.md");
   writeFileSync(goodFile, goodBody);

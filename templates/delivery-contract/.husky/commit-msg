@@ -24,4 +24,4 @@ sed -e '/^🤖 Generated with \[Claude Code\]/d' \
 mv "$TMP" "$COMMIT_MSG_FILE"
 
 # Validate commit message format (conventional commits)
-npx --no -- commitlint --edit "$COMMIT_MSG_FILE"
+{{pmExec}} commitlint --edit "$COMMIT_MSG_FILE"

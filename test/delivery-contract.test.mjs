@@ -208,10 +208,143 @@ test("install rejects an empty --scopes before writing anything", (t) => {
   assert.equal(fs.existsSync(path.join(f.consumer, MANAGED)), false);
 });
 
+// -------------------------------------------------------------------------------------------
+// omit: a fork that can't carry a given managed file (e.g. a `.husky/` hook when the fork's
+// hooks live elsewhere) tells the contract to never write, never delete, and never flag it.
+
+test("install --omit writes no such file, prints omit, and check is clean", (t) => {
+  const f = fixture(t);
+  const result = run(f, "install", "--scopes", "api", "--omit", HOOK);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`^omit   ${HOOK}$`, "m"));
+  assert.equal(fs.existsSync(path.join(f.consumer, HOOK)), false);
+
+  const answers = JSON.parse(read(f.consumer, ".delivery-contract.json"));
+  assert.deepEqual(answers.omit, [HOOK]);
+
+  assert.equal(run(f, "check").status, 0);
+});
+
+test("update never writes an omitted file, even after the template's copy changed", (t) => {
+  const f = fixture(t);
+  run(f, "install", "--omit", HOOK);
+  assert.equal(fs.existsSync(path.join(f.consumer, HOOK)), false);
+
+  fs.writeFileSync(path.join(f.template, HOOK), "#!/bin/sh\nexit 1\n");
+  const result = run(f, "update");
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, new RegExp(`^update ${HOOK}$`, "m"));
+  assert.match(result.stdout, new RegExp(`^omit   ${HOOK}$`, "m"));
+  assert.equal(fs.existsSync(path.join(f.consumer, HOOK)), false);
+  assert.equal(run(f, "check").status, 0);
+});
+
+test("omit naming a path that isn't a managed manifest entry exits 2", (t) => {
+  const f = fixture(t);
+  const result = run(f, "install", "--omit", SEEDED);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /does not name a managed file/);
+  assert.equal(fs.existsSync(path.join(f.consumer, MANAGED)), false);
+});
+
 test("--self-test exits 0", () => {
   const result = spawnSync(process.execPath, [executable, "--self-test"], {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.doesNotMatch(result.stdout, /^FAIL/m);
+});
+
+// -------------------------------------------------------------------------------------------
+// packageManager: these cases run against the REAL default template (no --template override),
+// because the fixture template above is synthetic and never touches the actual pnpm/bun-aware
+// workflow or commit-msg hook. They are the ones a consumer's `install --package-manager pnpm`
+// actually exercises.
+
+const WORKFLOW_PATH = ".github/workflows/pr-conventions.yml";
+
+// Captured from templates/delivery-contract/.github/workflows/pr-conventions.yml BEFORE this
+// change added {{pmInstall}}/{{pmExec}}/{{pmSetup}} — a `render: true` managed file re-renders
+// per consumer, so "byte-identical for the npm default" is the only way to prove this change
+// left every existing (npm) consumer's rendered file untouched. A copy read at test time instead
+// would just compare the template against itself and could never catch a regression here.
+const NPM_DEFAULT_WORKFLOW = fs.readFileSync(
+  fileURLToPath(
+    new URL("./fixtures/pr-conventions.npm-default.yml", import.meta.url),
+  ),
+);
+
+function realConsumer(t) {
+  const consumer = fs.mkdtempSync(
+    path.join(os.tmpdir(), "delivery-contract-real-template-"),
+  );
+  t.after(() => fs.rmSync(consumer, { recursive: true, force: true }));
+  return consumer;
+}
+
+function runReal(consumer, ...args) {
+  return spawnSync(
+    process.execPath,
+    [executable, ...args, "--repo", consumer],
+    { encoding: "utf8" },
+  );
+}
+
+test("pnpm install renders the real workflow with pnpm's exec/setup and zero npm-only tokens", (t) => {
+  const consumer = realConsumer(t);
+  const install = runReal(
+    consumer,
+    "install",
+    "--package-manager",
+    "pnpm",
+    "--scopes",
+    "web,server",
+  );
+  assert.equal(install.status, 0, install.stderr);
+
+  const workflow = fs.readFileSync(path.join(consumer, WORKFLOW_PATH), "utf8");
+  assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/);
+  assert.match(workflow, /pnpm exec commitlint --verbose/);
+  // SHA-pinned like every other `uses:` in this workflow — a bare `@v4` would be a
+  // floating tag, which claude-prompts-mcp (a consumer) enforces against.
+  assert.match(
+    workflow,
+    /^\s*- uses: pnpm\/action-setup@[0-9a-f]{40} # v4\.\d+\.\d+$/m,
+  );
+  // The pnpm/action-setup step must land before Setup Node.js, not after.
+  assert.ok(
+    workflow.indexOf("pnpm/action-setup@") <
+      workflow.indexOf("name: Setup Node.js"),
+  );
+  assert.doesNotMatch(workflow, /npm ci/);
+  assert.doesNotMatch(workflow, /npx --no --/);
+
+  const hook = fs.readFileSync(
+    path.join(consumer, ".husky/commit-msg"),
+    "utf8",
+  );
+  assert.match(hook, /pnpm exec commitlint --edit "\$COMMIT_MSG_FILE"/);
+});
+
+test("npm default renders the real workflow byte-identical to today's committed template", (t) => {
+  const consumer = realConsumer(t);
+  const install = runReal(consumer, "install");
+  assert.equal(install.status, 0, install.stderr);
+
+  const rendered = fs.readFileSync(path.join(consumer, WORKFLOW_PATH));
+  assert.deepEqual(rendered, NPM_DEFAULT_WORKFLOW);
+});
+
+test("check passes after a pnpm install, and fails after the rendered workflow is mutated", (t) => {
+  const consumer = realConsumer(t);
+  assert.equal(
+    runReal(consumer, "install", "--package-manager", "pnpm").status,
+    0,
+  );
+  assert.equal(runReal(consumer, "check").status, 0);
+
+  fs.appendFileSync(path.join(consumer, WORKFLOW_PATH), "# locally mutated\n");
+  const mutated = runReal(consumer, "check");
+  assert.equal(mutated.status, 1);
+  assert.match(mutated.stderr, new RegExp(`drift  ${WORKFLOW_PATH}`));
 });

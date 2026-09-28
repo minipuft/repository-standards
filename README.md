@@ -102,8 +102,20 @@ export REPOSITORY_STANDARDS_DIR=~/Applications/repository-standards
 ```
 
 ```bash
-node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" install --scopes a,b --adr-dir docs/adr
+node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" install --scopes a,b --adr-dir docs/adr --package-manager pnpm
 ```
+
+`--package-manager` (`npm` | `pnpm` | `bun`, default `npm`) picks the install/exec commands
+rendered into the CI workflow's title-lint step and `.husky/commit-msg` — `npm ci
+--ignore-scripts` / `npx --no --`, `pnpm install --frozen-lockfile --ignore-scripts` / `pnpm
+exec`, or `bun install --frozen-lockfile` / `bunx` — and, for pnpm and bun, adds the matching
+`actions/setup-*` step before `Setup Node.js`.
+
+`--omit path,path` (only valid with `install`) names managed files — each must appear as a
+`managed` entry in the template manifest — that `install`/`update` must never write and `update`
+must never delete; `check` skips them. Use it when a fork can't carry a given managed path itself
+(e.g. a fork tracking an upstream that owns `.husky/` puts the same hook content elsewhere and
+runs `install --omit .husky/commit-msg`).
 
 ```bash
 node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" update

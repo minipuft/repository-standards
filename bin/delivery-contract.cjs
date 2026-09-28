@@ -6,7 +6,10 @@
  * The template is a directory plus a `manifest.json` that classifies each file:
  *
  *   managed → owned by the template. `install` writes it, `update` overwrites it, `check` fails
- *             on any byte drift. A consumer that edits one has forked the contract.
+ *             on any byte drift. A consumer that edits one has forked the contract. `render: true`
+ *             on a managed file (the CI workflow, the commit-msg hook) re-renders it from the
+ *             consumer's own answers on every `install`/`update`/`check`, so a consumer's answers
+ *             — not just the template — decide what "undrifted" means for that file.
  *   seeded  → written once if absent, then the consumer's. `update` and `check` never touch or
  *             judge it. `render: true` substitutes `{{answer}}` placeholders on that one write.
  *
@@ -18,6 +21,7 @@
  *
  * Usage (run from a consuming repository):
  *   delivery-contract install [--scopes a,b] [--adr-dir DIR] [--default-branch NAME]
+ *                             [--package-manager npm|pnpm|bun]
  *   delivery-contract update
  *   delivery-contract check
  *   delivery-contract --self-test
@@ -99,11 +103,6 @@ function readManifest(templateDir) {
         `manifest entry ${entry.path}: class must be one of ${FILE_CLASSES.join(", ")}`,
       );
     }
-    if (entry.render && entry.class !== "seeded") {
-      throw new ContractError(
-        `manifest entry ${entry.path}: render is only valid on a seeded file — a rendered managed file would drift on every consumer`,
-      );
-    }
     if (entry.mode !== undefined && !/^0?[0-7]{3}$/.test(entry.mode)) {
       throw new ContractError(
         `manifest entry ${entry.path}: mode must be an octal string like "0755"`,
@@ -158,11 +157,12 @@ function readAnswersFile(repoRoot) {
   return document;
 }
 
-function writeAnswersFile(repoRoot, answers) {
+function writeAnswersFile(repoRoot, answers, omit = []) {
   const document = {
     $schema: SCHEMA_URL,
     templateVersion: templateVersion(),
     answers,
+    ...(omit.length > 0 ? { omit } : {}),
   };
   validateAnswersDocument(document);
   const next = `${JSON.stringify(document, null, 2)}\n`;
@@ -173,6 +173,28 @@ function writeAnswersFile(repoRoot, answers) {
   if (current === next) return false;
   fs.writeFileSync(answersPath, next);
   return true;
+}
+
+/**
+ * `omit` names managed-file paths install/update must never write and check must skip — the
+ * fork-can't-carry-this-file escape hatch (a fork tracking an upstream that owns its own hooks
+ * directory can't also carry `.husky/commit-msg`). Every entry must name a `managed` path in
+ * THIS manifest; anything else (a seeded path, a typo, a path from a different template version)
+ * is a contract violation, not a silent no-op.
+ */
+function validateOmit(manifest, omit) {
+  const managedPaths = new Set(
+    manifest.files
+      .filter((entry) => entry.class === "managed")
+      .map((entry) => entry.path),
+  );
+  for (const relPath of omit) {
+    if (!managedPaths.has(relPath)) {
+      throw new ContractError(
+        `omit entry ${relPath} does not name a managed file in the manifest`,
+      );
+    }
+  }
 }
 
 function resolveAnswers(manifest, flags) {
@@ -186,6 +208,64 @@ function resolveAnswers(manifest, flags) {
   return answers;
 }
 
+/**
+ * Fills in the manifest's declared defaults for any answer the consumer's document is missing.
+ * A consumer installed before a new answer existed (e.g. `packageManager`) has no key for it in
+ * `.delivery-contract.json`; `update` and `check` still need a value to render against, and that
+ * value must be the manifest's own default, not a guess made here.
+ */
+function answersWithDefaults(manifest, answers) {
+  const filled = { ...answers };
+  for (const [name, spec] of Object.entries(manifest.answers)) {
+    if (filled[name] === undefined && spec.default !== undefined) {
+      filled[name] = spec.default;
+    }
+  }
+  return filled;
+}
+
+/**
+ * Package-manager-derived placeholders available to any `render: true` file, on top of the
+ * consumer's own answers. Kept out of `.delivery-contract.json` and the schema — they are
+ * computed from `answers.packageManager`, never asked for or stored, so there is exactly one
+ * place (this function) that knows what each package manager's install/exec/CI-setup shape is.
+ */
+const PACKAGE_MANAGER_DERIVED = {
+  npm: {
+    pmInstall: "npm ci --ignore-scripts",
+    pmExec: "npx --no --",
+    pmSetup: "",
+  },
+  pnpm: {
+    pmInstall: "pnpm install --frozen-lockfile --ignore-scripts",
+    pmExec: "pnpm exec",
+    // No leading `- ` here — the template already supplies the sequence marker
+    // (`- "{{pmSetup}}"`) so the raw template parses as valid YAML unrendered.
+    // SHA-pinned like every other `uses:` in the workflow: the tag `v4` on
+    // pnpm/action-setup is annotated, so the commit is one hop past the tag object —
+    // `gh api repos/pnpm/action-setup/git/ref/tags/v4 -q .object.sha` (the tag object),
+    // then `gh api repos/pnpm/action-setup/git/tags/<that sha> -q .object.sha` (the
+    // commit). Resolved 2026-09-27 to release v4.3.0.
+    pmSetup:
+      "uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0",
+  },
+  bun: {
+    pmInstall: "bun install --frozen-lockfile",
+    pmExec: "bunx",
+    // oven-sh/setup-bun's `v2` tag is lightweight (points straight at the commit, no
+    // dereference needed). Resolved 2026-09-27 to release v2.2.0.
+    pmSetup:
+      "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0",
+  },
+};
+
+function derivedAnswers(answers) {
+  const packageManager = answers.packageManager ?? "npm";
+  const derived =
+    PACKAGE_MANAGER_DERIVED[packageManager] ?? PACKAGE_MANAGER_DERIVED.npm;
+  return { ...answers, ...derived };
+}
+
 // ---------------------------------------------------------------- rendering + writes
 
 function renderValue(value) {
@@ -195,8 +275,31 @@ function renderValue(value) {
   return String(value);
 }
 
+/**
+ * A placeholder that is the ONLY thing on its line — optionally behind a `- ` sequence marker,
+ * optionally quoted (quoting keeps the raw template valid, prettier-clean YAML; a bare
+ * `{{name}}` flow-mapping-shaped token gets reformatted by prettier's YAML printer) — renders
+ * specially when its answer is the empty string: the whole line, sequence marker, quotes, and
+ * trailing newline all disappear rather than leaving a blank or dash-only line behind. That is
+ * what lets `{{pmSetup}}` add a whole CI step for pnpm/bun and add nothing at all for npm, so the
+ * npm-rendered file stays byte-identical to a template that never had the step. Every other
+ * placeholder substitutes in place, inline.
+ */
 function render(content, answers, relPath) {
-  return content.replace(/\{\{(\w+)\}\}/g, (placeholder, name) => {
+  const withWholeLines = content.replace(
+    /^([ \t]*(?:-[ \t]+)?)"?\{\{(\w+)\}\}"?\r?\n/gm,
+    (line, prefix, name) => {
+      if (!(name in answers)) {
+        throw new ContractError(
+          `${relPath}: placeholder {{${name}}} has no answer`,
+        );
+      }
+      const value = answers[name];
+      if (value === "") return "";
+      return `${prefix}${renderValue(value)}\n`;
+    },
+  );
+  return withWholeLines.replace(/\{\{(\w+)\}\}/g, (placeholder, name) => {
     if (!(name in answers)) {
       throw new ContractError(
         `${relPath}: placeholder ${placeholder} has no answer`,
@@ -204,6 +307,17 @@ function render(content, answers, relPath) {
     }
     return renderValue(answers[name]);
   });
+}
+
+/** Template bytes for `entry`, rendered against `answers` (plus derived placeholders) when the
+ * manifest marks it `render: true`; raw template bytes otherwise. The one function every command
+ * (install/update/check) calls to get "what this file should look like for this consumer". */
+function renderedBytes(templateDir, entry, answers) {
+  const raw = templateBytes(templateDir, entry);
+  if (!entry.render) return raw;
+  return Buffer.from(
+    render(raw.toString("utf8"), derivedAnswers(answers), entry.path),
+  );
 }
 
 function writeFile(repoRoot, entry, content) {
@@ -217,13 +331,32 @@ function templateBytes(templateDir, entry) {
   return fs.readFileSync(path.join(templateDir, entry.path));
 }
 
-/** Managed files whose consumer bytes differ from the template (missing counts as differing). */
-function driftedManaged(repoRoot, templateDir, manifest) {
+/**
+ * Managed files whose consumer bytes differ from what the template renders for this consumer's
+ * `answers` (missing counts as differing). A plain managed file compares against raw template
+ * bytes; a `render: true` managed file (the pnpm/bun-aware workflow, the commit-msg hook)
+ * compares against ITS RENDER, so a consumer who installed with `packageManager: pnpm` sees no
+ * drift once its rendered file matches — the placeholders are gone from both sides.
+ *
+ * `omitSet` — managed paths this consumer's answers name via `omit` — are excluded entirely:
+ * never written, never flagged as drifted or missing, so a fork that can't carry a given managed
+ * file (e.g. `.husky/commit-msg`) never fights the contract over it.
+ */
+function driftedManaged(
+  repoRoot,
+  templateDir,
+  manifest,
+  answers,
+  omitSet = new Set(),
+) {
   return manifest.files.filter((entry) => {
     if (entry.class !== "managed") return false;
+    if (omitSet.has(entry.path)) return false;
     const target = path.join(repoRoot, entry.path);
     if (!fs.existsSync(target)) return true;
-    return !fs.readFileSync(target).equals(templateBytes(templateDir, entry));
+    return !fs
+      .readFileSync(target)
+      .equals(renderedBytes(templateDir, entry, answers));
   });
 }
 
@@ -257,19 +390,26 @@ function hasUncommittedChanges(repoRoot, relPath, inRepo) {
   return status.stdout.trim() !== "";
 }
 
-function printDiff(repoRoot, templateDir, relPath) {
+/**
+ * Diffs the consumer's copy against `expectedBytes` — the rendered template for this consumer's
+ * answers, not necessarily the raw template on disk. Writing that content to a scratch file
+ * rather than diffing straight against the template path keeps this correct for a `render: true`
+ * managed file: diffing against the raw `{{pmInstall}}`-carrying template would show every line
+ * as different even when the consumer's file is exactly what its own answers should produce.
+ */
+function printDiff(repoRoot, relPath, expectedBytes) {
+  const scratch = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "delivery-contract-diff-")),
+    path.basename(relPath),
+  );
+  fs.writeFileSync(scratch, expectedBytes);
   const result = spawnSync(
     "git",
-    [
-      "diff",
-      "--no-index",
-      "--",
-      path.join(repoRoot, relPath),
-      path.join(templateDir, relPath),
-    ],
+    ["diff", "--no-index", "--", path.join(repoRoot, relPath), scratch],
     { encoding: "utf8" },
   );
   process.stdout.write(result.stdout);
+  fs.rmSync(path.dirname(scratch), { recursive: true, force: true });
 }
 
 /**
@@ -365,13 +505,28 @@ function commandSettings(repoRoot, apply) {
 // ---------------------------------------------------------------- commands
 
 function commandUpdate(repoRoot, templateDir, manifest, document) {
-  const drifted = driftedManaged(repoRoot, templateDir, manifest);
+  const answers = answersWithDefaults(manifest, document.answers);
+  const omit = document.omit ?? [];
+  const omitSet = new Set(omit);
+  const drifted = driftedManaged(
+    repoRoot,
+    templateDir,
+    manifest,
+    answers,
+    omitSet,
+  );
   const inRepo = drifted.length > 0 && insideWorkTree(repoRoot);
   const dirty = drifted.filter((entry) =>
     hasUncommittedChanges(repoRoot, entry.path, inRepo),
   );
   if (dirty.length > 0) {
-    for (const entry of dirty) printDiff(repoRoot, templateDir, entry.path);
+    for (const entry of dirty) {
+      printDiff(
+        repoRoot,
+        entry.path,
+        renderedBytes(templateDir, entry, answers),
+      );
+    }
     console.error(
       `\n[delivery-contract] refusing to update — ${dirty.length} managed file(s) carry uncommitted changes:`,
     );
@@ -382,10 +537,11 @@ function commandUpdate(repoRoot, templateDir, manifest, document) {
     return 1;
   }
   for (const entry of drifted) {
-    writeFile(repoRoot, entry, templateBytes(templateDir, entry));
+    writeFile(repoRoot, entry, renderedBytes(templateDir, entry, answers));
     console.log(`update ${entry.path}`);
   }
-  const versionChanged = writeAnswersFile(repoRoot, document.answers);
+  for (const relPath of omit) console.log(`omit   ${relPath}`);
+  const versionChanged = writeAnswersFile(repoRoot, document.answers, omit);
   if (drifted.length === 0) {
     console.log(
       versionChanged
@@ -396,14 +552,18 @@ function commandUpdate(repoRoot, templateDir, manifest, document) {
   return 0;
 }
 
-function commandInstall(repoRoot, templateDir, manifest, flags) {
+function commandInstall(repoRoot, templateDir, manifest, flags, omit = []) {
   const answers = resolveAnswers(manifest, flags);
   // Validate before any write: a bad answer must not leave a half-installed consumer.
   validateAnswersDocument({ templateVersion: templateVersion(), answers });
+  validateOmit(manifest, omit);
+  const omitSet = new Set(omit);
   for (const entry of manifest.files) {
     const target = path.join(repoRoot, entry.path);
-    if (entry.class === "managed") {
-      writeFile(repoRoot, entry, templateBytes(templateDir, entry));
+    if (entry.class === "managed" && omitSet.has(entry.path)) {
+      console.log(`omit   ${entry.path}`);
+    } else if (entry.class === "managed") {
+      writeFile(repoRoot, entry, renderedBytes(templateDir, entry, answers));
       console.log(`write  ${entry.path}`);
     } else if (fs.existsSync(target)) {
       console.log(`keep   ${entry.path}`);
@@ -416,7 +576,7 @@ function commandInstall(repoRoot, templateDir, manifest, flags) {
       console.log(`seed   ${entry.path}`);
     }
   }
-  writeAnswersFile(repoRoot, answers);
+  writeAnswersFile(repoRoot, answers, omit);
   console.log(`write  ${ANSWERS_FILENAME}`);
   return 0;
 }
@@ -428,7 +588,15 @@ function commandCheck(repoRoot, templateDir, manifest, document) {
     );
     return 1;
   }
-  const drifted = driftedManaged(repoRoot, templateDir, manifest);
+  const answers = answersWithDefaults(manifest, document.answers);
+  const omitSet = new Set(document.omit ?? []);
+  const drifted = driftedManaged(
+    repoRoot,
+    templateDir,
+    manifest,
+    answers,
+    omitSet,
+  );
   if (drifted.length === 0) {
     console.log("clean");
     return 0;
@@ -445,12 +613,19 @@ function run(args) {
   const templateDir = path.resolve(args.template ?? DEFAULT_TEMPLATE);
   const manifest = readManifest(templateDir);
   const document = readAnswersFile(repoRoot);
+  if (document) validateOmit(manifest, document.omit ?? []);
 
   if (args.command === "check") {
     return commandCheck(repoRoot, templateDir, manifest, document);
   }
   if (args.command === "install" && !document) {
-    return commandInstall(repoRoot, templateDir, manifest, args.answers);
+    return commandInstall(
+      repoRoot,
+      templateDir,
+      manifest,
+      args.answers,
+      args.omit ?? [],
+    );
   }
   if (!document) {
     console.error(
@@ -576,11 +751,15 @@ function usage() {
   return [
     "Usage: delivery-contract <install | update | check> [--repo PATH] [--template PATH]",
     "       delivery-contract install [--scopes a,b,c] [--adr-dir DIR] [--default-branch NAME]",
+    "                                  [--package-manager npm|pnpm|bun] [--omit path,path]",
     "       delivery-contract settings [--apply] [--repo PATH]",
     "       delivery-contract --self-test | --help",
     "",
     "install   write managed files, seed absent seeded files, write .delivery-contract.json;",
     "          behaves as update when .delivery-contract.json already exists",
+    "--omit    comma-separated managed-file paths (from the template manifest) that install",
+    "          and update must never write; update deletes nothing for them and check skips",
+    "          them. Stored in .delivery-contract.json; only valid with install.",
     "update    overwrite drifted managed files; refuses (exit 1) on uncommitted changes",
     "check     exit 1 on any managed-file drift or a missing install; never writes",
     "settings  print (or, with --apply, run via `gh`) the repository settings PATCH the",
@@ -599,8 +778,9 @@ const VALUE_FLAGS = {
   "--scopes": "scopes",
   "--adr-dir": "adrDir",
   "--default-branch": "defaultBranch",
+  "--package-manager": "packageManager",
 };
-const ANSWER_FLAGS = ["scopes", "adrDir", "defaultBranch"];
+const ANSWER_FLAGS = ["scopes", "adrDir", "defaultBranch", "packageManager"];
 
 function parseArguments(argv) {
   const parsed = {
@@ -615,7 +795,17 @@ function parseArguments(argv) {
     if (argument === "--self-test") parsed.selfTest = true;
     else if (argument === "--help" || argument === "-h") parsed.help = true;
     else if (argument === "--apply") parsed.apply = true;
-    else if (argument in VALUE_FLAGS) {
+    else if (argument === "--omit") {
+      const value = argv[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new ContractError(`${argument} requires a value`);
+      }
+      parsed.omit = value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      index += 1;
+    } else if (argument in VALUE_FLAGS) {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith("--")) {
         throw new ContractError(`${argument} requires a value`);
@@ -643,6 +833,9 @@ function parseArguments(argv) {
   if (!parsed.command) throw new ContractError("a command is required");
   if (Object.keys(parsed.answers).length > 0 && parsed.command !== "install") {
     throw new ContractError("answer flags are only valid with install");
+  }
+  if (parsed.omit !== undefined && parsed.command !== "install") {
+    throw new ContractError("--omit is only valid with install");
   }
   if (parsed.apply && parsed.command !== "settings") {
     throw new ContractError("--apply is only valid with settings");

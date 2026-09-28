@@ -168,7 +168,6 @@ jobs:
           # green — but it would be a wrong red, so keep this.
           fetch-depth: 0
 
-      - "{{pmSetup}}"
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -201,5 +200,5 @@ jobs:
         # Root package.json holds only commitlint + husky; `--ignore-scripts` skips the husky
         # `prepare` step, which has nothing to wire on a CI checkout.
         run: |
-          {{pmInstall}}
-          printf '%s\n' "$PR_TITLE" | {{pmExec}} commitlint --verbose
+          npm ci --ignore-scripts
+          printf '%s\n' "$PR_TITLE" | npx --no -- commitlint --verbose
