@@ -135,6 +135,17 @@ function output(result) {
 }
 
 /**
+ * Lines `validate-pr-body.mjs` emits for a warning, not a failure — a body over the word budget
+ * still exits 0, so a step can PASS while carrying one of these. Matches both of that script's
+ * prefixes: `warning: ` outside CI and `::warning::` under `GITHUB_ACTIONS`.
+ */
+function warningLines(text) {
+  return text
+    .split("\n")
+    .filter((line) => /^(warning: |::warning::)/.test(line));
+}
+
+/**
  * Runs every step and returns one verdict per step — never short-circuits.
  *
  * `steps` is injectable so the self-test can drive the authored-input pair against fixtures
@@ -266,6 +277,11 @@ function main() {
     console.log(`${result.passed ? "ok  " : "FAIL"}  ${result.label}`);
     if (!result.passed && result.output) {
       console.log(result.output.replace(/^/gm, "      "));
+    } else if (result.passed) {
+      const warnings = warningLines(result.output);
+      if (warnings.length > 0) {
+        console.log(warnings.join("\n").replace(/^/gm, "      "));
+      }
     }
   }
 
