@@ -41,6 +41,14 @@
           "description": "Package manager the consumer's CI and hooks use to install dependencies and exec binaries."
         }
       }
+    },
+    "omit": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Managed-file paths (each must name a managed entry in the template manifest) that install/update must never write and update must never delete; check skips them."
     }
   }
 }

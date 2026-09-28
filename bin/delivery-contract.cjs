@@ -157,11 +157,12 @@ function readAnswersFile(repoRoot) {
   return document;
 }
 
-function writeAnswersFile(repoRoot, answers) {
+function writeAnswersFile(repoRoot, answers, omit = []) {
   const document = {
     $schema: SCHEMA_URL,
     templateVersion: templateVersion(),
     answers,
+    ...(omit.length > 0 ? { omit } : {}),
   };
   validateAnswersDocument(document);
   const next = `${JSON.stringify(document, null, 2)}\n`;
@@ -172,6 +173,28 @@ function writeAnswersFile(repoRoot, answers) {
   if (current === next) return false;
   fs.writeFileSync(answersPath, next);
   return true;
+}
+
+/**
+ * `omit` names managed-file paths install/update must never write and check must skip — the
+ * fork-can't-carry-this-file escape hatch (a fork tracking an upstream that owns its own hooks
+ * directory can't also carry `.husky/commit-msg`). Every entry must name a `managed` path in
+ * THIS manifest; anything else (a seeded path, a typo, a path from a different template version)
+ * is a contract violation, not a silent no-op.
+ */
+function validateOmit(manifest, omit) {
+  const managedPaths = new Set(
+    manifest.files
+      .filter((entry) => entry.class === "managed")
+      .map((entry) => entry.path),
+  );
+  for (const relPath of omit) {
+    if (!managedPaths.has(relPath)) {
+      throw new ContractError(
+        `omit entry ${relPath} does not name a managed file in the manifest`,
+      );
+    }
+  }
 }
 
 function resolveAnswers(manifest, flags) {
@@ -314,10 +337,21 @@ function templateBytes(templateDir, entry) {
  * bytes; a `render: true` managed file (the pnpm/bun-aware workflow, the commit-msg hook)
  * compares against ITS RENDER, so a consumer who installed with `packageManager: pnpm` sees no
  * drift once its rendered file matches — the placeholders are gone from both sides.
+ *
+ * `omitSet` — managed paths this consumer's answers name via `omit` — are excluded entirely:
+ * never written, never flagged as drifted or missing, so a fork that can't carry a given managed
+ * file (e.g. `.husky/commit-msg`) never fights the contract over it.
  */
-function driftedManaged(repoRoot, templateDir, manifest, answers) {
+function driftedManaged(
+  repoRoot,
+  templateDir,
+  manifest,
+  answers,
+  omitSet = new Set(),
+) {
   return manifest.files.filter((entry) => {
     if (entry.class !== "managed") return false;
+    if (omitSet.has(entry.path)) return false;
     const target = path.join(repoRoot, entry.path);
     if (!fs.existsSync(target)) return true;
     return !fs
@@ -472,7 +506,15 @@ function commandSettings(repoRoot, apply) {
 
 function commandUpdate(repoRoot, templateDir, manifest, document) {
   const answers = answersWithDefaults(manifest, document.answers);
-  const drifted = driftedManaged(repoRoot, templateDir, manifest, answers);
+  const omit = document.omit ?? [];
+  const omitSet = new Set(omit);
+  const drifted = driftedManaged(
+    repoRoot,
+    templateDir,
+    manifest,
+    answers,
+    omitSet,
+  );
   const inRepo = drifted.length > 0 && insideWorkTree(repoRoot);
   const dirty = drifted.filter((entry) =>
     hasUncommittedChanges(repoRoot, entry.path, inRepo),
@@ -498,7 +540,8 @@ function commandUpdate(repoRoot, templateDir, manifest, document) {
     writeFile(repoRoot, entry, renderedBytes(templateDir, entry, answers));
     console.log(`update ${entry.path}`);
   }
-  const versionChanged = writeAnswersFile(repoRoot, document.answers);
+  for (const relPath of omit) console.log(`omit   ${relPath}`);
+  const versionChanged = writeAnswersFile(repoRoot, document.answers, omit);
   if (drifted.length === 0) {
     console.log(
       versionChanged
@@ -509,13 +552,17 @@ function commandUpdate(repoRoot, templateDir, manifest, document) {
   return 0;
 }
 
-function commandInstall(repoRoot, templateDir, manifest, flags) {
+function commandInstall(repoRoot, templateDir, manifest, flags, omit = []) {
   const answers = resolveAnswers(manifest, flags);
   // Validate before any write: a bad answer must not leave a half-installed consumer.
   validateAnswersDocument({ templateVersion: templateVersion(), answers });
+  validateOmit(manifest, omit);
+  const omitSet = new Set(omit);
   for (const entry of manifest.files) {
     const target = path.join(repoRoot, entry.path);
-    if (entry.class === "managed") {
+    if (entry.class === "managed" && omitSet.has(entry.path)) {
+      console.log(`omit   ${entry.path}`);
+    } else if (entry.class === "managed") {
       writeFile(repoRoot, entry, renderedBytes(templateDir, entry, answers));
       console.log(`write  ${entry.path}`);
     } else if (fs.existsSync(target)) {
@@ -529,7 +576,7 @@ function commandInstall(repoRoot, templateDir, manifest, flags) {
       console.log(`seed   ${entry.path}`);
     }
   }
-  writeAnswersFile(repoRoot, answers);
+  writeAnswersFile(repoRoot, answers, omit);
   console.log(`write  ${ANSWERS_FILENAME}`);
   return 0;
 }
@@ -542,7 +589,14 @@ function commandCheck(repoRoot, templateDir, manifest, document) {
     return 1;
   }
   const answers = answersWithDefaults(manifest, document.answers);
-  const drifted = driftedManaged(repoRoot, templateDir, manifest, answers);
+  const omitSet = new Set(document.omit ?? []);
+  const drifted = driftedManaged(
+    repoRoot,
+    templateDir,
+    manifest,
+    answers,
+    omitSet,
+  );
   if (drifted.length === 0) {
     console.log("clean");
     return 0;
@@ -559,12 +613,19 @@ function run(args) {
   const templateDir = path.resolve(args.template ?? DEFAULT_TEMPLATE);
   const manifest = readManifest(templateDir);
   const document = readAnswersFile(repoRoot);
+  if (document) validateOmit(manifest, document.omit ?? []);
 
   if (args.command === "check") {
     return commandCheck(repoRoot, templateDir, manifest, document);
   }
   if (args.command === "install" && !document) {
-    return commandInstall(repoRoot, templateDir, manifest, args.answers);
+    return commandInstall(
+      repoRoot,
+      templateDir,
+      manifest,
+      args.answers,
+      args.omit ?? [],
+    );
   }
   if (!document) {
     console.error(
@@ -690,12 +751,15 @@ function usage() {
   return [
     "Usage: delivery-contract <install | update | check> [--repo PATH] [--template PATH]",
     "       delivery-contract install [--scopes a,b,c] [--adr-dir DIR] [--default-branch NAME]",
-    "                                  [--package-manager npm|pnpm|bun]",
+    "                                  [--package-manager npm|pnpm|bun] [--omit path,path]",
     "       delivery-contract settings [--apply] [--repo PATH]",
     "       delivery-contract --self-test | --help",
     "",
     "install   write managed files, seed absent seeded files, write .delivery-contract.json;",
     "          behaves as update when .delivery-contract.json already exists",
+    "--omit    comma-separated managed-file paths (from the template manifest) that install",
+    "          and update must never write; update deletes nothing for them and check skips",
+    "          them. Stored in .delivery-contract.json; only valid with install.",
     "update    overwrite drifted managed files; refuses (exit 1) on uncommitted changes",
     "check     exit 1 on any managed-file drift or a missing install; never writes",
     "settings  print (or, with --apply, run via `gh`) the repository settings PATCH the",
@@ -731,7 +795,17 @@ function parseArguments(argv) {
     if (argument === "--self-test") parsed.selfTest = true;
     else if (argument === "--help" || argument === "-h") parsed.help = true;
     else if (argument === "--apply") parsed.apply = true;
-    else if (argument in VALUE_FLAGS) {
+    else if (argument === "--omit") {
+      const value = argv[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new ContractError(`${argument} requires a value`);
+      }
+      parsed.omit = value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      index += 1;
+    } else if (argument in VALUE_FLAGS) {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith("--")) {
         throw new ContractError(`${argument} requires a value`);
@@ -759,6 +833,9 @@ function parseArguments(argv) {
   if (!parsed.command) throw new ContractError("a command is required");
   if (Object.keys(parsed.answers).length > 0 && parsed.command !== "install") {
     throw new ContractError("answer flags are only valid with install");
+  }
+  if (parsed.omit !== undefined && parsed.command !== "install") {
+    throw new ContractError("--omit is only valid with install");
   }
   if (parsed.apply && parsed.command !== "settings") {
     throw new ContractError("--apply is only valid with settings");

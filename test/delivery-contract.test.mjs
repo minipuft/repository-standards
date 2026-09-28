@@ -208,6 +208,45 @@ test("install rejects an empty --scopes before writing anything", (t) => {
   assert.equal(fs.existsSync(path.join(f.consumer, MANAGED)), false);
 });
 
+// -------------------------------------------------------------------------------------------
+// omit: a fork that can't carry a given managed file (e.g. a `.husky/` hook when the fork's
+// hooks live elsewhere) tells the contract to never write, never delete, and never flag it.
+
+test("install --omit writes no such file, prints omit, and check is clean", (t) => {
+  const f = fixture(t);
+  const result = run(f, "install", "--scopes", "api", "--omit", HOOK);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`^omit   ${HOOK}$`, "m"));
+  assert.equal(fs.existsSync(path.join(f.consumer, HOOK)), false);
+
+  const answers = JSON.parse(read(f.consumer, ".delivery-contract.json"));
+  assert.deepEqual(answers.omit, [HOOK]);
+
+  assert.equal(run(f, "check").status, 0);
+});
+
+test("update never writes an omitted file, even after the template's copy changed", (t) => {
+  const f = fixture(t);
+  run(f, "install", "--omit", HOOK);
+  assert.equal(fs.existsSync(path.join(f.consumer, HOOK)), false);
+
+  fs.writeFileSync(path.join(f.template, HOOK), "#!/bin/sh\nexit 1\n");
+  const result = run(f, "update");
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, new RegExp(`^update ${HOOK}$`, "m"));
+  assert.match(result.stdout, new RegExp(`^omit   ${HOOK}$`, "m"));
+  assert.equal(fs.existsSync(path.join(f.consumer, HOOK)), false);
+  assert.equal(run(f, "check").status, 0);
+});
+
+test("omit naming a path that isn't a managed manifest entry exits 2", (t) => {
+  const f = fixture(t);
+  const result = run(f, "install", "--omit", SEEDED);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /does not name a managed file/);
+  assert.equal(fs.existsSync(path.join(f.consumer, MANAGED)), false);
+});
+
 test("--self-test exits 0", () => {
   const result = spawnSync(process.execPath, [executable, "--self-test"], {
     encoding: "utf8",
