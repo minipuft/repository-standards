@@ -1129,10 +1129,14 @@ function assertBaseMeasurable() {
   const resolved = resolveMergeBase(REPO_ROOT);
   const ci = process.env.GITHUB_ACTIONS === "true";
   if (resolved.error) {
+    const remedy =
+      !ci && resolved.error === "`origin/HEAD` is not present in this checkout"
+        ? "`origin/HEAD` is not set in this clone — run `git remote set-head origin -a` " +
+          "(CI: keep `fetch-depth: 0` on the checkout step)."
+        : "Restore `fetch-depth: 0` on the checkout step in .github/workflows/pr-conventions.yml.";
     const message =
       `the plan-footer check cannot measure this checkout: ${resolved.error}. Any PR carrying ` +
-      "a `Plan:` footer would be judged against a vacuous comparison. Restore `fetch-depth: 0` " +
-      "on the checkout step in .github/workflows/pr-conventions.yml.";
+      `a \`Plan:\` footer would be judged against a vacuous comparison. ${remedy}`;
     console.log(ci ? `::error::${message}` : `error: ${message}`);
     return false;
   }
