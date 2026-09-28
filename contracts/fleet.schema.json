@@ -60,7 +60,11 @@
             "type": ["string", "null"],
             "pattern": "^v\\d+\\.\\d+\\.\\d+$"
           },
-          "dependencyAutomation": { "enum": ["none", "migrating", "renovate"] }
+          "dependencyAutomation": { "enum": ["none", "migrating", "renovate"] },
+          "deliveryContract": {
+            "type": "boolean",
+            "description": "whether the repo is expected to carry `.delivery-contract.json`"
+          }
         }
       }
     }

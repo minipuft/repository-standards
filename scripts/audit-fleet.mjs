@@ -89,6 +89,28 @@ async function repositoryIdentity(repository) {
   }
 }
 
+// `.delivery-contract.json` is optional per-repo (fleet.json's `deliveryContract` flag says
+// whether it is EXPECTED, not whether it exists), so a 404 is a normal "not present" answer —
+// same as `dependabotPresent` above. Any other failure (auth, transport, rate limit) is
+// swallowed the same way `repositoryIdentity` swallows one: this probe must never take the
+// whole audit down for one repository, and an unresolved probe already grades as `present:
+// false` with no note attached at the auditor layer — acceptable here because the surrounding
+// snapshot fetch (`raw()` for the contract file, unconditional) already throws loudly on the
+// same class of failure for anything that would otherwise go undetected.
+async function deliveryContractSnapshot(repository) {
+  try {
+    const text = await request(
+      `https://raw.githubusercontent.com/${repository}/main/.delivery-contract.json`,
+      { optional: true },
+    );
+    if (text === null) return { present: false, templateVersion: null };
+    const parsed = JSON.parse(text);
+    return { present: true, templateVersion: parsed.templateVersion ?? null };
+  } catch {
+    return { present: false, templateVersion: null };
+  }
+}
+
 async function repositorySnapshot(entry, mergeMode) {
   const contract = JSON.parse(
     await raw(entry.repository, "downstream-contract.json"),
@@ -108,6 +130,7 @@ async function repositorySnapshot(entry, mergeMode) {
     protectionChecks: protection.required_status_checks?.contexts ?? [],
     checkOutcomes: await checkOutcomes(entry.repository),
     identity: await repositoryIdentity(entry.repository),
+    delivery: await deliveryContractSnapshot(entry.repository),
     mergeMode,
     dependabotPresent:
       (await request(
