@@ -44,7 +44,7 @@ const SCHEMA_URL =
   "https://raw.githubusercontent.com/minipuft/repository-standards/main/contracts/delivery-contract.schema.json";
 const ANSWERS_FILENAME = ".delivery-contract.json";
 const FILE_CLASSES = ["managed", "seeded"];
-const COMMANDS = ["install", "update", "check"];
+const COMMANDS = ["install", "update", "check", "settings"];
 
 /** Exit code for a contract violation: bad arguments, manifest, or answers file. */
 const EXIT_CONTRACT = 2;
@@ -272,6 +272,96 @@ function printDiff(repoRoot, templateDir, relPath) {
   process.stdout.write(result.stdout);
 }
 
+/**
+ * Extracts `{ owner, repo }` from a GitHub origin URL — HTTPS (`https://github.com/o/r(.git)`)
+ * or SSH (`git@github.com:o/r(.git)`). Returns null for anything else, including a non-GitHub host.
+ */
+function parseGitHubRemote(url) {
+  const trimmed = url.trim();
+  const https = trimmed.match(
+    /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/,
+  );
+  if (https) return { owner: https[1], repo: https[2] };
+  const ssh = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (ssh) return { owner: ssh[1], repo: ssh[2] };
+  return null;
+}
+
+function squashSettingsCommand(owner, repo) {
+  return [
+    `gh api -X PATCH repos/${owner}/${repo} \\`,
+    "  -f squash_merge_commit_title=PR_TITLE \\",
+    "  -f squash_merge_commit_message=PR_BODY \\",
+    "  -F delete_branch_on_merge=true",
+  ].join("\n");
+}
+
+/**
+ * Repository settings the delivery contract depends on but cannot template: the squash-merge
+ * commit defaults and delete-branch-on-merge, applied via `gh api` against the origin remote.
+ * Never touches the default branch — changing it is an owner act, not something this tool does
+ * on a consumer's behalf.
+ */
+function commandSettings(repoRoot, apply) {
+  const remote = git(repoRoot, ["remote", "get-url", "origin"]);
+  if (remote.status !== 0) {
+    console.error(
+      "[delivery-contract] no origin remote — settings needs a GitHub origin to target",
+    );
+    return EXIT_CONTRACT;
+  }
+  const parsed = parseGitHubRemote(remote.stdout);
+  if (!parsed) {
+    console.error(
+      `[delivery-contract] origin is not a GitHub remote: ${remote.stdout.trim()}`,
+    );
+    return EXIT_CONTRACT;
+  }
+  const { owner, repo } = parsed;
+  console.log(
+    "default-branch changes are an owner act — this command never touches it.",
+  );
+  if (!apply) {
+    console.log(squashSettingsCommand(owner, repo));
+    return 0;
+  }
+  const patch = spawnSync(
+    "gh",
+    [
+      "api",
+      "-X",
+      "PATCH",
+      `repos/${owner}/${repo}`,
+      "-f",
+      "squash_merge_commit_title=PR_TITLE",
+      "-f",
+      "squash_merge_commit_message=PR_BODY",
+      "-F",
+      "delete_branch_on_merge=true",
+    ],
+    { encoding: "utf8" },
+  );
+  if (patch.status !== 0) {
+    console.error(
+      `[delivery-contract] gh api PATCH failed: ${(patch.stderr || patch.stdout || "").trim()}`,
+    );
+    return 1;
+  }
+  const readBack = spawnSync(
+    "gh",
+    ["api", `repos/${owner}/${repo}`, "-q", ".squash_merge_commit_message"],
+    { encoding: "utf8" },
+  );
+  if (readBack.status !== 0) {
+    console.error(
+      `[delivery-contract] gh api readback failed: ${(readBack.stderr || readBack.stdout || "").trim()}`,
+    );
+    return 1;
+  }
+  console.log(`squash_merge_commit_message=${readBack.stdout.trim()}`);
+  return 0;
+}
+
 // ---------------------------------------------------------------- commands
 
 function commandUpdate(repoRoot, templateDir, manifest, document) {
@@ -367,6 +457,11 @@ function run(args) {
       `not installed — ${ANSWERS_FILENAME} is missing; run \`delivery-contract install\``,
     );
     return 1;
+  }
+  if (args.command === "install") {
+    console.log(
+      "already installed — running update (answer flags are ignored; edit .delivery-contract.json to change answers)",
+    );
   }
   return commandUpdate(repoRoot, templateDir, manifest, document);
 }
@@ -481,12 +576,17 @@ function usage() {
   return [
     "Usage: delivery-contract <install | update | check> [--repo PATH] [--template PATH]",
     "       delivery-contract install [--scopes a,b,c] [--adr-dir DIR] [--default-branch NAME]",
+    "       delivery-contract settings [--apply] [--repo PATH]",
     "       delivery-contract --self-test | --help",
     "",
-    "install  write managed files, seed absent seeded files, write .delivery-contract.json;",
-    "         behaves as update when .delivery-contract.json already exists",
-    "update   overwrite drifted managed files; refuses (exit 1) on uncommitted changes",
-    "check    exit 1 on any managed-file drift or a missing install; never writes",
+    "install   write managed files, seed absent seeded files, write .delivery-contract.json;",
+    "          behaves as update when .delivery-contract.json already exists",
+    "update    overwrite drifted managed files; refuses (exit 1) on uncommitted changes",
+    "check     exit 1 on any managed-file drift or a missing install; never writes",
+    "settings  print (or, with --apply, run via `gh`) the repository settings PATCH the",
+    "          contract depends on: squash-merge commit defaults, delete-branch-on-merge.",
+    "          Reads owner/repo from the --repo checkout's `origin` remote. Never touches",
+    "          the default branch — that stays an owner act.",
     "",
     "--repo defaults to the current working directory; --template to this package's",
     "templates/delivery-contract. Exit 2 on an invalid manifest, answers file, or argument.",
@@ -503,11 +603,18 @@ const VALUE_FLAGS = {
 const ANSWER_FLAGS = ["scopes", "adrDir", "defaultBranch"];
 
 function parseArguments(argv) {
-  const parsed = { command: null, selfTest: false, help: false, answers: {} };
+  const parsed = {
+    command: null,
+    selfTest: false,
+    help: false,
+    apply: false,
+    answers: {},
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--self-test") parsed.selfTest = true;
     else if (argument === "--help" || argument === "-h") parsed.help = true;
+    else if (argument === "--apply") parsed.apply = true;
     else if (argument in VALUE_FLAGS) {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith("--")) {
@@ -537,6 +644,9 @@ function parseArguments(argv) {
   if (Object.keys(parsed.answers).length > 0 && parsed.command !== "install") {
     throw new ContractError("answer flags are only valid with install");
   }
+  if (parsed.apply && parsed.command !== "settings") {
+    throw new ContractError("--apply is only valid with settings");
+  }
   return parsed;
 }
 
@@ -556,6 +666,13 @@ function main() {
   }
   if (args.selfTest) {
     process.exitCode = selfTest();
+    return;
+  }
+  if (args.command === "settings") {
+    process.exitCode = commandSettings(
+      path.resolve(args.repo ?? process.cwd()),
+      args.apply,
+    );
     return;
   }
   try {

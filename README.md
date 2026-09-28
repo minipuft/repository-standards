@@ -14,6 +14,9 @@ Versioned consumer contracts, reusable validation, dependency policy, and read-o
 - `conventions/plan-frontmatter.md`: canonical plan frontmatter schema, status vocabulary, and retirement contract.
 - `bin/retire-done-plans.cjs`: portable plan-retirement executable for local and CI use.
 - `contracts/plan-retirement.schema.json`: fail-closed consumer configuration contract.
+- `bin/delivery-contract.cjs`: portable commit/ADR/release scaffolding installer and updater.
+- `contracts/delivery-contract.schema.json`: canonical `.delivery-contract.json` answers schema.
+- `templates/delivery-contract/`: canonical managed and seeded files the contract installs.
 - Product-specific build, symlink, plugin, and release behavior remains local to each consumer.
 
 Consumers pin both the reusable workflow and its `standards-ref` input to the same immutable commit SHA:
@@ -84,6 +87,65 @@ commit SHA:
   with:
     mode: apply
 ```
+
+## Delivery contract
+
+The delivery contract is the commit, ADR, and release scaffolding a consumer shares with the rest
+of the fleet: outcome-named commit titles, a PR body that is checked and lands on `main` via
+squash-merge, `Initiative:`/`Decision:` trailers carried onto that squash commit, and an
+append-only ADR log with a generated index. It installs into a consumer repository from a sibling
+checkout of this repository — set `REPOSITORY_STANDARDS_DIR` once, defaulting to
+`~/Applications/repository-standards`:
+
+```bash
+export REPOSITORY_STANDARDS_DIR=~/Applications/repository-standards
+```
+
+```bash
+node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" install --scopes a,b --adr-dir docs/adr
+```
+
+```bash
+node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" update
+```
+
+```bash
+node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" check
+```
+
+Commit right after `install` — it writes `.delivery-contract.json` alongside the scaffolding, and
+an uncommitted managed file is exactly what `update` later refuses to overwrite.
+
+| Managed (template owns it; drift fails `check`) | Seeded (written once; yours after that) |
+| ----------------------------------------------- | --------------------------------------- |
+| `commitlint.rules.mjs`                          | `commitlint.config.mjs`                 |
+| `.husky/commit-msg`                             | `.github/pull_request_template.md`      |
+| `.github/workflows/pr-conventions.yml`          | `docs/adr/0000-template.md`             |
+| `scripts/pr-check.mjs`                          |                                         |
+| `scripts/pr-body.mjs`                           |                                         |
+| `scripts/validate-pr-body.mjs`                  |                                         |
+| `scripts/adr.mjs`                               |                                         |
+
+Every commit on an initiative carries an `Initiative:` trailer; a decision commit also carries
+`Decision:`. Query an arc, or find commits missing the trailer, with:
+
+```bash
+git log --format='%h %(trailers:key=Initiative,valueonly) %s' | grep -v '^\S\+  '
+```
+
+ADRs are numbered, never renumbered or reused, and only their status changes after acceptance:
+
+```bash
+node scripts/adr.mjs new "title" --initiative x
+node scripts/adr.mjs supersede NNNN "title"
+node scripts/adr.mjs index
+node scripts/adr.mjs check
+```
+
+`delivery-contract settings [--apply] [--repo PATH]` prints (or, with `--apply`, runs via `gh`)
+the squash-merge and delete-branch-on-merge settings the contract depends on, reading owner/repo
+from the target checkout's `origin` remote. It never touches the default branch — changing that
+stays an owner act.
 
 ## Contract boundaries
 
