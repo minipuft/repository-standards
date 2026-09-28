@@ -233,12 +233,40 @@ function stripComments(text) {
 }
 
 /**
- * Comments AND `<details>` archives stripped. Trailers (`Initiative:`, `Decision:`) are only real
- * outside both — the generated skeleton's own comment block mentions both trailer names as
- * guidance, and a collapsed appendix may quote an example body that names one too.
+ * Every fenced code block (``` or ~~~) blanked line-by-line, line count preserved. A fenced block
+ * is CONTENT, never a trailer: a `## Demonstration` example showing what a `Plan:` footer or a
+ * `Decision:` trailer looks like must not be read as one.
+ */
+function stripFences(text) {
+  const lines = (text || "").split("\n");
+  let fenceMarker = null;
+  return lines
+    .map((line) => {
+      const opener = /^\s*(```|~~~)/.exec(line);
+      if (fenceMarker === null && opener) {
+        fenceMarker = opener[1];
+        return "";
+      }
+      if (fenceMarker !== null) {
+        if (opener && opener[1] === fenceMarker) fenceMarker = null;
+        return "";
+      }
+      return line;
+    })
+    .join("\n");
+}
+
+/**
+ * Comments, fenced blocks, AND `<details>` archives stripped. Trailers (`Plan:`, `Initiative:`,
+ * `Decision:`) are only real outside all three — the generated skeleton's own comment block
+ * mentions the trailer names as guidance, a `## Demonstration` fenced example may show what one
+ * looks like, and a collapsed appendix may quote an example body that names one too.
  */
 function stripTrailerNoise(text) {
-  return stripComments(text).replace(/<details>[\s\S]*?<\/details>/gi, "");
+  return stripFences(stripComments(text)).replace(
+    /<details>[\s\S]*?<\/details>/gi,
+    "",
+  );
 }
 
 /** Section name → body text, HTML comments stripped so an untouched template reads as empty. */
@@ -389,7 +417,7 @@ function planAtMergeBase(repoRoot, relPath) {
  * footer's plan must already carry a final `status:`.
  */
 function checkPlanFooter(body, failures, repoRoot, readPlanAtMergeBase) {
-  const match = /^Plan:\s*`?(plans\/\S+?)`?\s*$/m.exec(stripComments(body));
+  const match = /^Plan:\s*`?(plans\/\S+?)`?\s*$/m.exec(stripTrailerNoise(body));
   if (!match) return;
   const relPath = match[1];
   const planPath = path.join(repoRoot, relPath);
@@ -917,6 +945,24 @@ function selfTest() {
       body: `${filled}\nDecision: ADR-0008\n`,
       title: "feat(chains): x",
       expect: (r) => r.failures.some((f) => f.includes("0008")),
+    },
+    // --- Fenced example text is content, never a trailer ---
+    {
+      name: "Plan/Initiative/Decision lines inside a fenced Demonstration example are content, not trailers",
+      body: filled.replace(
+        "```\nbefore\n```",
+        "```\nPlan: `plans/gone.md`\nInitiative: bogus\nDecision: ADR-0008\n```",
+      ),
+      title: "feat(chains): x",
+      expect: noFail,
+    },
+    {
+      name: "the same lines outside a fence still trigger the existing failures",
+      body: `${filled}\nPlan: \`plans/gone.md\`\nInitiative: bogus\nDecision: ADR-0008\n`,
+      title: "feat(chains): x",
+      expect: (r) =>
+        r.failures.some((f) => f.includes("does not exist")) &&
+        r.failures.some((f) => f.includes("0008")),
     },
   ];
   let failed = 0;
