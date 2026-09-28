@@ -228,28 +228,79 @@ export function runSteps({ bodyFile, title, steps = MIRRORED_CI_STEPS }) {
  * own. Asserts failure, not just a non-zero exit somewhere: each half is driven to red while the
  * other is held green, so a wrapper that ran only one check cannot pass this.
  */
+/**
+ * The default body used when this checkout carries no
+ * `.github/pull_request_template.md` — `validate-pr-body.mjs` falls back to the same
+ * `REQUIRED_SECTIONS` constant in that case, so this fixture is the historical baseline, not a
+ * second SSOT.
+ */
+const DEFAULT_GOOD_BODY = [
+  "## Summary",
+  "",
+  "After this merges, the local PR check runs every gate CI runs.",
+  "",
+  "## Demonstration",
+  "",
+  "n/a: tooling only, no consumer-observable surface.",
+  "",
+  "## How it was verified",
+  "",
+  "| Claim | Probe | Baseline → measured | Mutation that fails it |",
+  "| --- | --- | --- | --- |",
+  "| It runs | `node scripts/pr-check.mjs --self-test` | 0 → 4 steps | drop a step |",
+  "",
+  "## Notes for Reviewers",
+  "",
+  "Distrust the parity test first.",
+  "",
+].join("\n");
+
+/**
+ * Builds a "good" body from the SAME source `validate-pr-body.mjs` reads — a fork that keeps
+ * upstream's PR template with different headings needs a fixture that mirrors it, not the four
+ * default headings, or the self-test fails the body step on a body it invented itself. Falls back
+ * to `DEFAULT_GOOD_BODY` when this checkout has no template.
+ */
+function buildGoodBody(repoRoot) {
+  const templatePath = path.join(
+    repoRoot,
+    ".github",
+    "pull_request_template.md",
+  );
+  if (!existsSync(templatePath)) return DEFAULT_GOOD_BODY;
+
+  const headings = readFileSync(templatePath, "utf8")
+    .split("\n")
+    .map((line) => /^##\s+(.*?)\s*$/.exec(line)?.[1])
+    .filter((name) => name !== undefined);
+  if (headings.length === 0) return DEFAULT_GOOD_BODY;
+
+  const lines = [];
+  for (const name of headings) {
+    lines.push(`## ${name}`, "");
+    if (name === "Demonstration") {
+      lines.push("n/a: self-test fixture");
+    } else if (name === "How it was verified") {
+      lines.push(
+        "| Claim | Probe | Baseline → measured | Mutation that fails it |",
+        "| --- | --- | --- | --- |",
+        "| It runs | `node scripts/pr-check.mjs --self-test` | 0 → 4 steps | drop a step |",
+      );
+    } else if (name === "Still open") {
+      lines.push("None");
+    } else {
+      lines.push(
+        `Filled for the self-test fixture — see \`## ${name}\` in the template.`,
+      );
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 function selfTest() {
   const scratch = mkdtempSync(path.join(tmpdir(), "pr-check-"));
-  const goodBody = [
-    "## Summary",
-    "",
-    "After this merges, the local PR check runs every gate CI runs.",
-    "",
-    "## Demonstration",
-    "",
-    "n/a: tooling only, no consumer-observable surface.",
-    "",
-    "## How it was verified",
-    "",
-    "| Claim | Probe | Baseline → measured | Mutation that fails it |",
-    "| --- | --- | --- | --- |",
-    "| It runs | `node scripts/pr-check.mjs --self-test` | 0 → 4 steps | drop a step |",
-    "",
-    "## Notes for Reviewers",
-    "",
-    "Distrust the parity test first.",
-    "",
-  ].join("\n");
+  const goodBody = buildGoodBody(REPO_ROOT);
   const goodFile = path.join(scratch, "good.md");
   const badFile = path.join(scratch, "bad.md");
   writeFileSync(goodFile, goodBody);
