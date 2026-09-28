@@ -282,8 +282,15 @@ function renderValue(value) {
  * specially when its answer is the empty string: the whole line, sequence marker, quotes, and
  * trailing newline all disappear rather than leaving a blank or dash-only line behind. That is
  * what lets `{{pmSetup}}` add a whole CI step for pnpm/bun and add nothing at all for npm, so the
- * npm-rendered file stays byte-identical to a template that never had the step. Every other
- * placeholder substitutes in place, inline.
+ * npm-rendered file stays byte-identical to a template that never had the step.
+ *
+ * A placeholder quoted mid-line (`node-version-file: "{{nodeVersionFile}}"`) gets the same quote
+ * treatment for the same reason — the raw template must stay prettier-clean YAML — but always
+ * strips the quotes on render rather than special-casing the empty string: unlike a whole-line
+ * placeholder, a mid-line one sits next to a key that still needs a value, so there is no "drop
+ * the line" case, and the quotes exist only to keep the UNRENDERED template parseable, not because
+ * the answers this repo defines (paths, package-manager names) ever need YAML quoting once
+ * substituted. Every other placeholder substitutes in place, inline.
  */
 function render(content, answers, relPath) {
   const withWholeLines = content.replace(
@@ -299,7 +306,18 @@ function render(content, answers, relPath) {
       return `${prefix}${renderValue(value)}\n`;
     },
   );
-  return withWholeLines.replace(/\{\{(\w+)\}\}/g, (placeholder, name) => {
+  const withInlineQuoted = withWholeLines.replace(
+    /"\{\{(\w+)\}\}"/g,
+    (placeholder, name) => {
+      if (!(name in answers)) {
+        throw new ContractError(
+          `${relPath}: placeholder ${placeholder} has no answer`,
+        );
+      }
+      return renderValue(answers[name]);
+    },
+  );
+  return withInlineQuoted.replace(/\{\{(\w+)\}\}/g, (placeholder, name) => {
     if (!(name in answers)) {
       throw new ContractError(
         `${relPath}: placeholder ${placeholder} has no answer`,
@@ -751,7 +769,8 @@ function usage() {
   return [
     "Usage: delivery-contract <install | update | check> [--repo PATH] [--template PATH]",
     "       delivery-contract install [--scopes a,b,c] [--adr-dir DIR] [--default-branch NAME]",
-    "                                  [--package-manager npm|pnpm|bun] [--omit path,path]",
+    "                                  [--package-manager npm|pnpm|bun] [--node-version-file PATH]",
+    "                                  [--omit path,path]",
     "       delivery-contract settings [--apply] [--repo PATH]",
     "       delivery-contract --self-test | --help",
     "",
@@ -779,8 +798,15 @@ const VALUE_FLAGS = {
   "--adr-dir": "adrDir",
   "--default-branch": "defaultBranch",
   "--package-manager": "packageManager",
+  "--node-version-file": "nodeVersionFile",
 };
-const ANSWER_FLAGS = ["scopes", "adrDir", "defaultBranch", "packageManager"];
+const ANSWER_FLAGS = [
+  "scopes",
+  "adrDir",
+  "defaultBranch",
+  "packageManager",
+  "nodeVersionFile",
+];
 
 function parseArguments(argv) {
   const parsed = {
