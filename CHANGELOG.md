@@ -5,6 +5,13 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.7.0](https://github.com/minipuft/repository-standards/compare/v1.6.1...v1.7.0) (2026-09-28)
+
+
+### Added
+
+* **delivery:** a consumer names the file its Node version is read from ([#26](https://github.com/minipuft/repository-standards/issues/26)) ([47c6ac0](https://github.com/minipuft/repository-standards/commit/47c6ac042de4939e83a4871fc525e65a7ecee085))
+
 ## [1.6.1](https://github.com/minipuft/repository-standards/compare/v1.6.0...v1.6.1) (2026-09-28)
 
 
