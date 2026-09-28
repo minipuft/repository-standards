@@ -1,0 +1,569 @@
+#!/usr/bin/env node
+/**
+ * Installs and keeps current the delivery contract — the commit, ADR, and release scaffolding a
+ * consuming repository shares with every other repository in the fleet.
+ *
+ * The template is a directory plus a `manifest.json` that classifies each file:
+ *
+ *   managed → owned by the template. `install` writes it, `update` overwrites it, `check` fails
+ *             on any byte drift. A consumer that edits one has forked the contract.
+ *   seeded  → written once if absent, then the consumer's. `update` and `check` never touch or
+ *             judge it. `render: true` substitutes `{{answer}}` placeholders on that one write.
+ *
+ * The consumer's answers live in `.delivery-contract.json`, validated against
+ * contracts/delivery-contract.schema.json on every subcommand.
+ *
+ * `update` refuses to overwrite a managed file carrying uncommitted changes: it prints the diff
+ * and writes nothing in that run, so a local edit is never lost to a template refresh.
+ *
+ * Usage (run from a consuming repository):
+ *   delivery-contract install [--scopes a,b] [--adr-dir DIR] [--default-branch NAME]
+ *   delivery-contract update
+ *   delivery-contract check
+ *   delivery-contract --self-test
+ *   delivery-contract <command> --repo /path/to/consumer --template /path/to/template
+ */
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { spawnSync } = require("child_process");
+
+const PACKAGE_ROOT = path.resolve(__dirname, "..");
+const DEFAULT_TEMPLATE = path.join(
+  PACKAGE_ROOT,
+  "templates",
+  "delivery-contract",
+);
+const SCHEMA_PATH = path.join(
+  PACKAGE_ROOT,
+  "contracts",
+  "delivery-contract.schema.json",
+);
+const SCHEMA_URL =
+  "https://raw.githubusercontent.com/minipuft/repository-standards/main/contracts/delivery-contract.schema.json";
+const ANSWERS_FILENAME = ".delivery-contract.json";
+const FILE_CLASSES = ["managed", "seeded"];
+const COMMANDS = ["install", "update", "check"];
+
+/** Exit code for a contract violation: bad arguments, manifest, or answers file. */
+const EXIT_CONTRACT = 2;
+
+class ContractError extends Error {}
+
+function templateVersion() {
+  return JSON.parse(
+    fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8"),
+  ).version;
+}
+
+function isWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return (
+    relative !== "" &&
+    !relative.startsWith(`..${path.sep}`) &&
+    relative !== ".." &&
+    !path.isAbsolute(relative)
+  );
+}
+
+// ---------------------------------------------------------------- manifest + answers
+
+function readManifest(templateDir) {
+  const manifestPath = path.join(templateDir, "manifest.json");
+  if (!fs.existsSync(manifestPath)) {
+    throw new ContractError(`template manifest not found: ${manifestPath}`);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  } catch (error) {
+    throw new ContractError(`manifest.json is not JSON: ${error.message}`);
+  }
+  if (!Array.isArray(manifest.files)) {
+    throw new ContractError("manifest.json `files` must be an array");
+  }
+  for (const entry of manifest.files) {
+    if (typeof entry.path !== "string" || path.isAbsolute(entry.path)) {
+      throw new ContractError(
+        `manifest entry path must be relative: ${entry.path}`,
+      );
+    }
+    if (!isWithin(templateDir, path.resolve(templateDir, entry.path))) {
+      throw new ContractError(
+        `manifest entry escapes the template: ${entry.path}`,
+      );
+    }
+    if (!FILE_CLASSES.includes(entry.class)) {
+      throw new ContractError(
+        `manifest entry ${entry.path}: class must be one of ${FILE_CLASSES.join(", ")}`,
+      );
+    }
+    if (entry.render && entry.class !== "seeded") {
+      throw new ContractError(
+        `manifest entry ${entry.path}: render is only valid on a seeded file — a rendered managed file would drift on every consumer`,
+      );
+    }
+    if (entry.mode !== undefined && !/^0?[0-7]{3}$/.test(entry.mode)) {
+      throw new ContractError(
+        `manifest entry ${entry.path}: mode must be an octal string like "0755"`,
+      );
+    }
+    if (!fs.existsSync(path.join(templateDir, entry.path))) {
+      throw new ContractError(
+        `manifest entry ${entry.path} has no file in the template`,
+      );
+    }
+  }
+  return { files: manifest.files, answers: manifest.answers ?? {} };
+}
+
+let compiledValidator;
+function answersValidator() {
+  if (!compiledValidator) {
+    const Ajv2020 = require("ajv/dist/2020");
+    const Ajv = Ajv2020.default ?? Ajv2020;
+    compiledValidator = new Ajv({ allErrors: true, strict: true }).compile(
+      JSON.parse(fs.readFileSync(SCHEMA_PATH, "utf8")),
+    );
+  }
+  return compiledValidator;
+}
+
+function validateAnswersDocument(document) {
+  const validate = answersValidator();
+  if (!validate(document)) {
+    const detail = validate.errors
+      .map((error) => `${error.instancePath || "/"} ${error.message}`)
+      .join("; ");
+    throw new ContractError(
+      `${ANSWERS_FILENAME} violates the schema: ${detail}`,
+    );
+  }
+}
+
+/** Returns the parsed, validated answers document — or null when the consumer has none. */
+function readAnswersFile(repoRoot) {
+  const answersPath = path.join(repoRoot, ANSWERS_FILENAME);
+  if (!fs.existsSync(answersPath)) return null;
+  let document;
+  try {
+    document = JSON.parse(fs.readFileSync(answersPath, "utf8"));
+  } catch (error) {
+    throw new ContractError(
+      `${ANSWERS_FILENAME} is not JSON: ${error.message}`,
+    );
+  }
+  validateAnswersDocument(document);
+  return document;
+}
+
+function writeAnswersFile(repoRoot, answers) {
+  const document = {
+    $schema: SCHEMA_URL,
+    templateVersion: templateVersion(),
+    answers,
+  };
+  validateAnswersDocument(document);
+  const next = `${JSON.stringify(document, null, 2)}\n`;
+  const answersPath = path.join(repoRoot, ANSWERS_FILENAME);
+  const current = fs.existsSync(answersPath)
+    ? fs.readFileSync(answersPath, "utf8")
+    : null;
+  if (current === next) return false;
+  fs.writeFileSync(answersPath, next);
+  return true;
+}
+
+function resolveAnswers(manifest, flags) {
+  const answers = {};
+  for (const [name, spec] of Object.entries(manifest.answers)) {
+    if (spec.default !== undefined) answers[name] = spec.default;
+  }
+  for (const [name, value] of Object.entries(flags)) {
+    if (value !== undefined) answers[name] = value;
+  }
+  return answers;
+}
+
+// ---------------------------------------------------------------- rendering + writes
+
+function renderValue(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => `'${String(item).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`).join(", ")}]`;
+  }
+  return String(value);
+}
+
+function render(content, answers, relPath) {
+  return content.replace(/\{\{(\w+)\}\}/g, (placeholder, name) => {
+    if (!(name in answers)) {
+      throw new ContractError(
+        `${relPath}: placeholder ${placeholder} has no answer`,
+      );
+    }
+    return renderValue(answers[name]);
+  });
+}
+
+function writeFile(repoRoot, entry, content) {
+  const target = path.join(repoRoot, entry.path);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, content);
+  if (entry.mode) fs.chmodSync(target, parseInt(entry.mode, 8));
+}
+
+function templateBytes(templateDir, entry) {
+  return fs.readFileSync(path.join(templateDir, entry.path));
+}
+
+/** Managed files whose consumer bytes differ from the template (missing counts as differing). */
+function driftedManaged(repoRoot, templateDir, manifest) {
+  return manifest.files.filter((entry) => {
+    if (entry.class !== "managed") return false;
+    const target = path.join(repoRoot, entry.path);
+    if (!fs.existsSync(target)) return true;
+    return !fs.readFileSync(target).equals(templateBytes(templateDir, entry));
+  });
+}
+
+// ---------------------------------------------------------------- git
+
+function git(repoRoot, args) {
+  return spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8" });
+}
+
+function insideWorkTree(repoRoot) {
+  const result = git(repoRoot, ["rev-parse", "--is-inside-work-tree"]);
+  return result.status === 0 && result.stdout.trim() === "true";
+}
+
+/**
+ * A tracked file whose working copy differs from what git recorded (modified or staged).
+ * Overwriting it would lose an edit that exists nowhere else. An untracked managed file is
+ * template bytes the consumer has not committed yet, so it is not guarded; outside a work tree
+ * there is no record to consult, so nothing counts as uncommitted.
+ */
+function hasUncommittedChanges(repoRoot, relPath, inRepo) {
+  if (!inRepo || !fs.existsSync(path.join(repoRoot, relPath))) return false;
+  const tracked = git(repoRoot, ["ls-files", "--error-unmatch", "--", relPath]);
+  if (tracked.status !== 0) return false;
+  const diff = git(repoRoot, ["diff", "--quiet", "--", relPath]);
+  if (diff.status !== 0) return true;
+  const status = git(repoRoot, ["status", "--porcelain", "--", relPath]);
+  if (status.status !== 0) {
+    throw new Error(`git status failed for ${relPath}: ${status.stderr}`);
+  }
+  return status.stdout.trim() !== "";
+}
+
+function printDiff(repoRoot, templateDir, relPath) {
+  const result = spawnSync(
+    "git",
+    [
+      "diff",
+      "--no-index",
+      "--",
+      path.join(repoRoot, relPath),
+      path.join(templateDir, relPath),
+    ],
+    { encoding: "utf8" },
+  );
+  process.stdout.write(result.stdout);
+}
+
+// ---------------------------------------------------------------- commands
+
+function commandUpdate(repoRoot, templateDir, manifest, document) {
+  const drifted = driftedManaged(repoRoot, templateDir, manifest);
+  const inRepo = drifted.length > 0 && insideWorkTree(repoRoot);
+  const dirty = drifted.filter((entry) =>
+    hasUncommittedChanges(repoRoot, entry.path, inRepo),
+  );
+  if (dirty.length > 0) {
+    for (const entry of dirty) printDiff(repoRoot, templateDir, entry.path);
+    console.error(
+      `\n[delivery-contract] refusing to update — ${dirty.length} managed file(s) carry uncommitted changes:`,
+    );
+    for (const entry of dirty) console.error(`  ${entry.path}`);
+    console.error(
+      "\nCommit or discard them first; the diff above is what update would replace. Nothing was written.",
+    );
+    return 1;
+  }
+  for (const entry of drifted) {
+    writeFile(repoRoot, entry, templateBytes(templateDir, entry));
+    console.log(`update ${entry.path}`);
+  }
+  const versionChanged = writeAnswersFile(repoRoot, document.answers);
+  if (drifted.length === 0) {
+    console.log(
+      versionChanged
+        ? `up to date (templateVersion -> ${templateVersion()})`
+        : "up to date",
+    );
+  }
+  return 0;
+}
+
+function commandInstall(repoRoot, templateDir, manifest, flags) {
+  const answers = resolveAnswers(manifest, flags);
+  // Validate before any write: a bad answer must not leave a half-installed consumer.
+  validateAnswersDocument({ templateVersion: templateVersion(), answers });
+  for (const entry of manifest.files) {
+    const target = path.join(repoRoot, entry.path);
+    if (entry.class === "managed") {
+      writeFile(repoRoot, entry, templateBytes(templateDir, entry));
+      console.log(`write  ${entry.path}`);
+    } else if (fs.existsSync(target)) {
+      console.log(`keep   ${entry.path}`);
+    } else {
+      const raw = templateBytes(templateDir, entry);
+      const content = entry.render
+        ? render(raw.toString("utf8"), answers, entry.path)
+        : raw;
+      writeFile(repoRoot, entry, content);
+      console.log(`seed   ${entry.path}`);
+    }
+  }
+  writeAnswersFile(repoRoot, answers);
+  console.log(`write  ${ANSWERS_FILENAME}`);
+  return 0;
+}
+
+function commandCheck(repoRoot, templateDir, manifest, document) {
+  if (!document) {
+    console.error(
+      `not installed — ${ANSWERS_FILENAME} is missing; run \`delivery-contract install\``,
+    );
+    return 1;
+  }
+  const drifted = driftedManaged(repoRoot, templateDir, manifest);
+  if (drifted.length === 0) {
+    console.log("clean");
+    return 0;
+  }
+  for (const entry of drifted) console.error(`drift  ${entry.path}`);
+  console.error(
+    "\nManaged files are owned by the template. Run `delivery-contract update` to restore them.",
+  );
+  return 1;
+}
+
+function run(args) {
+  const repoRoot = path.resolve(args.repo ?? process.cwd());
+  const templateDir = path.resolve(args.template ?? DEFAULT_TEMPLATE);
+  const manifest = readManifest(templateDir);
+  const document = readAnswersFile(repoRoot);
+
+  if (args.command === "check") {
+    return commandCheck(repoRoot, templateDir, manifest, document);
+  }
+  if (args.command === "install" && !document) {
+    return commandInstall(repoRoot, templateDir, manifest, args.answers);
+  }
+  if (!document) {
+    console.error(
+      `not installed — ${ANSWERS_FILENAME} is missing; run \`delivery-contract install\``,
+    );
+    return 1;
+  }
+  return commandUpdate(repoRoot, templateDir, manifest, document);
+}
+
+// ---------------------------------------------------------------- self-test
+
+function selfTest() {
+  const sandbox = fs.mkdtempSync(
+    path.join(os.tmpdir(), "delivery-contract-self-test-"),
+  );
+  const template = path.join(sandbox, "template");
+  const consumer = path.join(sandbox, "consumer");
+  fs.mkdirSync(path.join(template, "scripts"), { recursive: true });
+  fs.mkdirSync(consumer);
+  const files = {
+    "managed.txt": "managed v1\n",
+    "seeded.mjs": "export const scopes = {{scopes}};\n",
+    "scripts/hook.sh": "#!/bin/sh\nexit 0\n",
+  };
+  for (const [rel, content] of Object.entries(files)) {
+    fs.writeFileSync(path.join(template, rel), content);
+  }
+  fs.writeFileSync(
+    path.join(template, "manifest.json"),
+    JSON.stringify({
+      files: [
+        { path: "managed.txt", class: "managed" },
+        { path: "seeded.mjs", class: "seeded", render: true },
+        { path: "scripts/hook.sh", class: "managed", mode: "0755" },
+      ],
+      answers: {
+        scopes: { type: "array", default: ["core"], description: "scopes" },
+      },
+    }),
+  );
+
+  const invoke = (...argv) =>
+    spawnSync(
+      process.execPath,
+      [__filename, ...argv, "--repo", consumer, "--template", template],
+      { encoding: "utf8" },
+    );
+  const results = [];
+  const expect = (name, condition) => {
+    results.push(condition);
+    console.log(`${condition ? "PASS" : "FAIL"}  ${name}`);
+  };
+
+  try {
+    const install = invoke("install", "--scopes", "api,cli");
+    const seeded = fs.readFileSync(path.join(consumer, "seeded.mjs"), "utf8");
+    const hookMode =
+      fs.statSync(path.join(consumer, "scripts/hook.sh")).mode & 0o777;
+    expect(
+      "install writes managed, seeded (rendered), and mode-0755 files",
+      install.status === 0 &&
+        seeded === "export const scopes = ['api', 'cli'];\n" &&
+        hookMode === 0o755,
+    );
+    expect("check after install exits 0", invoke("check").status === 0);
+
+    fs.writeFileSync(path.join(consumer, "managed.txt"), "local edit\n");
+    const drift = invoke("check");
+    expect(
+      "check detects a mutated managed file (positive control)",
+      drift.status === 1 && drift.stderr.includes("drift  managed.txt"),
+    );
+
+    const update = invoke("update");
+    expect(
+      "update restores the managed file",
+      update.status === 0 && update.stdout.includes("update managed.txt"),
+    );
+    expect("check after update exits 0", invoke("check").status === 0);
+
+    fs.writeFileSync(
+      path.join(consumer, "seeded.mjs"),
+      "export const x = 1;\n",
+    );
+    expect("check ignores a mutated seeded file", invoke("check").status === 0);
+
+    const answersBefore = fs.readFileSync(
+      path.join(consumer, ANSWERS_FILENAME),
+    );
+    const again = invoke("install");
+    expect(
+      "second install writes 0 files",
+      again.status === 0 &&
+        !/^(write|seed|update) /m.test(again.stdout) &&
+        fs
+          .readFileSync(path.join(consumer, ANSWERS_FILENAME))
+          .equals(answersBefore),
+    );
+  } catch (error) {
+    expect(`self-test raised: ${error.message}`, false);
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+
+  const failed = results.filter((ok) => !ok).length;
+  console.log(
+    failed === 0
+      ? `delivery-contract self-test OK — ${results.length} case(s)`
+      : `delivery-contract self-test FAILED — ${failed} of ${results.length} case(s)`,
+  );
+  return failed === 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------- CLI
+
+function usage() {
+  return [
+    "Usage: delivery-contract <install | update | check> [--repo PATH] [--template PATH]",
+    "       delivery-contract install [--scopes a,b,c] [--adr-dir DIR] [--default-branch NAME]",
+    "       delivery-contract --self-test | --help",
+    "",
+    "install  write managed files, seed absent seeded files, write .delivery-contract.json;",
+    "         behaves as update when .delivery-contract.json already exists",
+    "update   overwrite drifted managed files; refuses (exit 1) on uncommitted changes",
+    "check    exit 1 on any managed-file drift or a missing install; never writes",
+    "",
+    "--repo defaults to the current working directory; --template to this package's",
+    "templates/delivery-contract. Exit 2 on an invalid manifest, answers file, or argument.",
+  ].join("\n");
+}
+
+const VALUE_FLAGS = {
+  "--repo": "repo",
+  "--template": "template",
+  "--scopes": "scopes",
+  "--adr-dir": "adrDir",
+  "--default-branch": "defaultBranch",
+};
+const ANSWER_FLAGS = ["scopes", "adrDir", "defaultBranch"];
+
+function parseArguments(argv) {
+  const parsed = { command: null, selfTest: false, help: false, answers: {} };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--self-test") parsed.selfTest = true;
+    else if (argument === "--help" || argument === "-h") parsed.help = true;
+    else if (argument in VALUE_FLAGS) {
+      const value = argv[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new ContractError(`${argument} requires a value`);
+      }
+      const key = VALUE_FLAGS[argument];
+      if (ANSWER_FLAGS.includes(key)) {
+        parsed.answers[key] =
+          key === "scopes"
+            ? value
+                .split(",")
+                .map((scope) => scope.trim())
+                .filter(Boolean)
+            : value;
+      } else {
+        parsed[key] = value;
+      }
+      index += 1;
+    } else if (COMMANDS.includes(argument) && parsed.command === null) {
+      parsed.command = argument;
+    } else {
+      throw new ContractError(`unknown argument: ${argument}`);
+    }
+  }
+  if (parsed.help || parsed.selfTest) return parsed;
+  if (!parsed.command) throw new ContractError("a command is required");
+  if (Object.keys(parsed.answers).length > 0 && parsed.command !== "install") {
+    throw new ContractError("answer flags are only valid with install");
+  }
+  return parsed;
+}
+
+function main() {
+  let args;
+  try {
+    args = parseArguments(process.argv.slice(2));
+  } catch (error) {
+    console.error(`[delivery-contract] ${error.message}`);
+    console.error(usage());
+    process.exitCode = EXIT_CONTRACT;
+    return;
+  }
+  if (args.help) {
+    console.log(usage());
+    return;
+  }
+  if (args.selfTest) {
+    process.exitCode = selfTest();
+    return;
+  }
+  try {
+    process.exitCode = run(args);
+  } catch (error) {
+    console.error(`[delivery-contract] ${error.message}`);
+    process.exitCode = error instanceof ContractError ? EXIT_CONTRACT : 1;
+  }
+}
+
+main();
