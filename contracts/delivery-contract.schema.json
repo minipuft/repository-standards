@@ -39,6 +39,11 @@
           "type": "string",
           "enum": ["npm", "pnpm", "bun"],
           "description": "Package manager the consumer's CI and hooks use to install dependencies and exec binaries."
+        },
+        "nodeVersionFile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path setup-node reads the Node version from (node-version-file). Defaults to .node-version; a consumer declaring Node in package.json engines instead sets this to package.json."
         }
       }
     },

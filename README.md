@@ -111,6 +111,10 @@ rendered into the CI workflow's title-lint step and `.husky/commit-msg` — `npm
 exec`, or `bun install --frozen-lockfile` / `bunx` — and, for pnpm and bun, adds the matching
 `actions/setup-*` step before `Setup Node.js`.
 
+`--node-version-file PATH` (default `.node-version`) sets `setup-node`'s `node-version-file` —
+point it at `package.json` for a consumer that declares Node in `engines` instead of carrying a
+`.node-version` file.
+
 `--omit path,path` (only valid with `install`) names managed files — each must appear as a
 `managed` entry in the template manifest — that `install`/`update` must never write and `update`
 must never delete; `check` skips them. Use it when a fork can't carry a given managed path itself

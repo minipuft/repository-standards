@@ -348,3 +348,25 @@ test("check passes after a pnpm install, and fails after the rendered workflow i
   assert.equal(mutated.status, 1);
   assert.match(mutated.stderr, new RegExp(`drift  ${WORKFLOW_PATH}`));
 });
+
+// A fork (e.g. t3code) declares Node in package.json `engines` instead of carrying a
+// `.node-version` file; measured 2026-09-28 (t3code PR #11 CI): setup-node failed because the
+// hardcoded `node-version-file: .node-version` names a file that does not exist there.
+test("--node-version-file renders the requested path into setup-node", (t) => {
+  const consumer = realConsumer(t);
+  const install = runReal(
+    consumer,
+    "install",
+    "--node-version-file",
+    "package.json",
+    "--scopes",
+    "a",
+  );
+  assert.equal(install.status, 0, install.stderr);
+
+  const workflow = fs.readFileSync(path.join(consumer, WORKFLOW_PATH), "utf8");
+  assert.match(workflow, /node-version-file: package\.json/);
+  assert.doesNotMatch(workflow, /node-version-file: \.node-version/);
+
+  assert.equal(runReal(consumer, "check").status, 0);
+});

@@ -69,6 +69,11 @@
       "type": "string",
       "default": "npm",
       "description": "npm, pnpm, or bun; chooses the install/exec commands rendered into CI and the commit-msg hook"
+    },
+    "nodeVersionFile": {
+      "type": "string",
+      "default": ".node-version",
+      "description": "path setup-node reads the Node version from; set to package.json for a consumer declaring Node in engines instead of a .node-version file"
     }
   }
 }
