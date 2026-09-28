@@ -12,13 +12,17 @@ const root = resolve(new URL("..", import.meta.url).pathname);
 const fleet = JSON.parse(readFileSync(resolve(root, "fleet.json"), "utf8"));
 const token = process.env.FLEET_AUDIT_TOKEN || process.env.GITHUB_TOKEN;
 
-async function request(url, { optional = false } = {}) {
+function authHeaders() {
   const headers = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2026-03-10",
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(url, { headers });
+  return headers;
+}
+
+async function request(url, { optional = false } = {}) {
+  const response = await fetch(url, { headers: authHeaders() });
   if (optional && response.status === 404) return null;
   if (!response.ok)
     throw new Error(`${response.status} ${response.statusText}: ${url}`);
@@ -83,35 +87,93 @@ async function repositoryIdentity(repository) {
     const payload = JSON.parse(
       await request(`https://api.github.com/repos/${repository}`),
     );
-    return { id: payload.id, fullName: payload.full_name };
+    return {
+      id: payload.id,
+      fullName: payload.full_name,
+      defaultBranch: payload.default_branch,
+    };
   } catch {
     return undefined;
   }
 }
 
 // `.delivery-contract.json` is optional per-repo (fleet.json's `deliveryContract` flag says
-// whether it is EXPECTED, not whether it exists), so a 404 is a normal "not present" answer —
-// same as `dependabotPresent` above. Any other failure (auth, transport, rate limit) is
-// swallowed the same way `repositoryIdentity` swallows one: this probe must never take the
-// whole audit down for one repository, and an unresolved probe already grades as `present:
-// false` with no note attached at the auditor layer — acceptable here because the surrounding
-// snapshot fetch (`raw()` for the contract file, unconditional) already throws loudly on the
-// same class of failure for anything that would otherwise go undetected.
-async function deliveryContractSnapshot(repository) {
+// whether it is EXPECTED, not whether it exists). It used to be read unauthenticated off
+// `raw.githubusercontent.com/<repo>/main/...`, which is wrong on two axes at once: `raw`
+// serves only public repos (a private member 404s — indistinguishable from "the file does not
+// exist" — and is reported "missing" though the probe never actually looked), and `main` is a
+// literal, not every repo's default branch (t3code's is `custom/main`). Both defects share one
+// fix: read through the authenticated `contents` API, at the DEFAULT branch `repositoryIdentity`
+// already resolved, the same way every other authenticated probe in this file works.
+//
+// The three outcomes are graded differently on purpose:
+//   404              -> the file genuinely is not there. A normal "not present" answer.
+//   401/403/other    -> the probe never reached the file (no read access, or the default branch
+//                       is unknown because identity itself failed to resolve). Reporting this as
+//                       "missing" would tell a private repository it is out of compliance for a
+//                       reason that has nothing to do with compliance — `unexplained` carries
+//                       the detail so the auditor grades it as an unverified note instead.
+async function deliveryContractSnapshot(repository, ref) {
+  if (!ref) {
+    return {
+      present: false,
+      templateVersion: null,
+      unexplained:
+        "default branch unresolved (repository identity did not resolve)",
+    };
+  }
+  let response;
   try {
-    const text = await request(
-      `https://raw.githubusercontent.com/${repository}/main/.delivery-contract.json`,
-      { optional: true },
+    response = await fetch(
+      `https://api.github.com/repos/${repository}/contents/.delivery-contract.json?ref=${encodeURIComponent(ref)}`,
+      { headers: authHeaders() },
     );
-    if (text === null) return { present: false, templateVersion: null };
+  } catch (error) {
+    return {
+      present: false,
+      templateVersion: null,
+      unexplained: error.message,
+    };
+  }
+  if (response.status === 404) return { present: false, templateVersion: null };
+  if (!response.ok) {
+    return {
+      present: false,
+      templateVersion: null,
+      unexplained: `${response.status} ${response.statusText}`,
+    };
+  }
+  try {
+    const payload = await response.json();
+    const text = Buffer.from(
+      payload.content,
+      payload.encoding ?? "base64",
+    ).toString("utf8");
     const parsed = JSON.parse(text);
     return { present: true, templateVersion: parsed.templateVersion ?? null };
-  } catch {
-    return { present: false, templateVersion: null };
+  } catch (error) {
+    return {
+      present: false,
+      templateVersion: null,
+      unexplained: error.message,
+    };
   }
 }
 
 async function repositorySnapshot(entry, mergeMode) {
+  const identity = await repositoryIdentity(entry.repository);
+  const delivery = await deliveryContractSnapshot(
+    entry.repository,
+    identity?.defaultBranch,
+  );
+  // `consumerContract: false` marks a fleet member that never claimed to carry
+  // `downstream-contract.json`, a claude-prompts caller workflow, branch-protection required
+  // checks, or a Renovate/Dependabot posture — it is audited for the delivery contract only.
+  // Fetching those files for it would throw on the first missing one (`raw()` is unconditional)
+  // for a repo that was never supposed to have them.
+  if (entry.consumerContract === false) {
+    return { identity, delivery, mergeMode };
+  }
   const contract = JSON.parse(
     await raw(entry.repository, "downstream-contract.json"),
   );
@@ -129,8 +191,8 @@ async function repositorySnapshot(entry, mergeMode) {
     caller,
     protectionChecks: protection.required_status_checks?.contexts ?? [],
     checkOutcomes: await checkOutcomes(entry.repository),
-    identity: await repositoryIdentity(entry.repository),
-    delivery: await deliveryContractSnapshot(entry.repository),
+    identity,
+    delivery,
     mergeMode,
     dependabotPresent:
       (await request(
