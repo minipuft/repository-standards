@@ -1,0 +1,35 @@
+{
+  "files": [
+    { "path": "commitlint.rules.mjs", "class": "managed" },
+    { "path": "commitlint.config.mjs", "class": "seeded", "render": true },
+    { "path": ".husky/commit-msg", "class": "managed", "mode": "0755" },
+    { "path": ".github/workflows/pr-conventions.yml", "class": "managed" },
+    { "path": ".github/pull_request_template.md", "class": "seeded" },
+    { "path": "scripts/pr-check.mjs", "class": "managed", "mode": "0755" },
+    { "path": "scripts/pr-body.mjs", "class": "managed", "mode": "0755" },
+    {
+      "path": "scripts/validate-pr-body.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    { "path": "scripts/adr.mjs", "class": "managed", "mode": "0755" },
+    { "path": "docs/adr/0000-template.md", "class": "seeded" }
+  ],
+  "answers": {
+    "scopes": {
+      "type": "array",
+      "default": ["docs", "ci", "deps", "config"],
+      "description": "commitlint scope-enum; the repo's own module names"
+    },
+    "adrDir": {
+      "type": "string",
+      "default": "docs/adr",
+      "description": "where ADRs live"
+    },
+    "defaultBranch": {
+      "type": "string",
+      "default": "main",
+      "description": "the branch PRs target"
+    }
+  }
+}
