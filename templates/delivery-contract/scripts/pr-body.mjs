@@ -35,7 +35,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { checkBody } from "./validate-pr-body.mjs";
+import { checkBody, DEFAULT_ADR_DIR } from "./validate-pr-body.mjs";
 
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -67,7 +67,13 @@ function branchFacts(base) {
       return { file, churn: Number(added) + Number(deleted) || 0 };
     })
     .sort((a, b) => b.churn - a.churn);
-  return { subjects, files, numstat };
+  /** Files this branch adds or modifies — a rename's new path counts, a deletion does not. */
+  const addedOrModified = git("diff", "--name-status", range)
+    .split("\n")
+    .filter(Boolean)
+    .filter((line) => /^[AM]|^R\d*/.test(line))
+    .map((line) => line.split("\t").pop());
+  return { subjects, files, numstat, addedOrModified };
 }
 
 /** The plan is the first changed `plans/**` file that is not implementation notes. */
@@ -79,6 +85,41 @@ function detectPlan(files, explicit) {
       f.endsWith(".md") &&
       !f.includes("implementation-notes"),
   );
+}
+
+/** Plan filename → initiative slug: no dir, no `.md`, no `-implementation-notes`, no trailing date. */
+function initiativeSlug(planPath) {
+  const base = path.basename(planPath, ".md");
+  return base
+    .replace(/-implementation-notes$/, "")
+    .replace(/-\d{4}-\d{2}-\d{2}$/, "");
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** `.delivery-contract.json` → `answers.adrDir`, or `DEFAULT_ADR_DIR` when absent or unset. */
+function resolveAdrDir() {
+  const answersPath = path.join(REPO_ROOT, ".delivery-contract.json");
+  if (!existsSync(answersPath)) return DEFAULT_ADR_DIR;
+  try {
+    const parsed = JSON.parse(readFileSync(answersPath, "utf8"));
+    return parsed?.answers?.adrDir || DEFAULT_ADR_DIR;
+  } catch {
+    return DEFAULT_ADR_DIR;
+  }
+}
+
+/** `ADR-NNNN` for every added/modified `<adrDir>/NNNN-*.md`, `0000` excluded, sorted ascending. */
+function adrDecisions(addedOrModified, adrDir) {
+  const pattern = new RegExp(`^${escapeRegExp(adrDir)}/(\\d{4})-[^/]+\\.md$`);
+  const numbers = new Set();
+  for (const f of addedOrModified) {
+    const match = pattern.exec(f);
+    if (match && match[1] !== "0000") numbers.add(match[1]);
+  }
+  return [...numbers].sort().map((n) => `ADR-${n}`);
 }
 
 /** `☐` rows of a plan's markdown tables → `id — first words`. */
@@ -220,8 +261,14 @@ function main() {
     "Notes for Reviewers": notes(facts),
     "Still open": stillOpen(plan),
   });
+  const decisions = adrDecisions(facts.addedOrModified, resolveAdrDir());
+  const trailers = [];
+  if (plan)
+    trailers.push(`Plan: \`${plan}\``, `Initiative: ${initiativeSlug(plan)}`);
+  trailers.push(...decisions.map((d) => `Decision: ${d}`));
+
   const tail = [""];
-  if (plan) tail.push(`Plan: \`${plan}\``, "");
+  if (trailers.length > 0) tail.push(...trailers, "");
   tail.push(...appendix(facts), "");
   tail.push(
     `<!-- derived: ${facts.subjects.length} commits · ${facts.files.length} files · base ${base} -->`,
