@@ -17,7 +17,8 @@
       "claudePromptsWriter": "claude-prompts-release-sync",
       "mergeMode": "auto",
       "renovatePresetVersion": "v1.0.1",
-      "dependencyAutomation": "renovate"
+      "dependencyAutomation": "renovate",
+      "deliveryContract": false
     },
     {
       "repository": "minipuft/opencode-prompts",
@@ -33,7 +34,8 @@
       "claudePromptsWriter": "claude-prompts-release-sync",
       "mergeMode": "auto",
       "renovatePresetVersion": "v1.0.1",
-      "dependencyAutomation": "renovate"
+      "dependencyAutomation": "renovate",
+      "deliveryContract": false
     },
     {
       "repository": "minipuft/minipuft-plugins",
@@ -45,7 +47,8 @@
       "claudePromptsWriter": "claude-prompts-release-sync",
       "mergeMode": "auto",
       "renovatePresetVersion": null,
-      "dependencyAutomation": "none"
+      "dependencyAutomation": "none",
+      "deliveryContract": false
     },
     {
       "repository": "minipuft/codex-prompts",
@@ -57,7 +60,8 @@
       "claudePromptsWriter": "claude-prompts-release-sync",
       "mergeMode": "auto",
       "renovatePresetVersion": null,
-      "dependencyAutomation": "none"
+      "dependencyAutomation": "none",
+      "deliveryContract": false
     }
   ]
 }

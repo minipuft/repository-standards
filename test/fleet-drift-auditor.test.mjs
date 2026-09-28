@@ -41,6 +41,12 @@ function healthySnapshots() {
           }
         : undefined,
       dependabotPresent: entry.dependencyAutomation === "migrating",
+      // A healthy fixture answers the `deliveryContract` expectation it was declared with:
+      // present when expected, absent otherwise. Every divergence below sets this explicitly,
+      // the same discipline the identity and version fixtures above already follow.
+      delivery: entry.deliveryContract
+        ? { present: true, templateVersion: "1.4.0" }
+        : { present: false, templateVersion: null },
     };
   }
   return {
@@ -361,4 +367,64 @@ test("every fleet entry pins an immutable repository id", () => {
       `${entry.repository} has no pinned repositoryId, so its name cannot be verified as identity`,
     );
   }
+});
+
+// `deliveryContract` is a fleet.json expectation, not derived from profile, so these three cases
+// override the fleet inventory itself (the same pattern as the "invented profile" test above)
+// rather than only mutating a snapshot.
+function withDeliveryExpectation(repository, expected) {
+  return {
+    ...fleet,
+    repositories: fleet.repositories.map((entry) =>
+      entry.repository === repository
+        ? { ...entry, deliveryContract: expected }
+        : entry,
+    ),
+  };
+}
+
+test("a delivery contract present when expected is reported, not drift", () => {
+  const target = fleet.repositories[0].repository;
+  const snapshots = healthySnapshots();
+  snapshots.repositories[target].delivery = {
+    present: true,
+    templateVersion: "1.4.0",
+  };
+  const audit = auditFleet(withDeliveryExpectation(target, true), snapshots);
+  assert.equal(audit.violationCount, 0);
+  assert.match(formatFleetReport(audit), /Delivery: 1\.4\.0/);
+});
+
+test("a delivery contract expected but missing is drift", () => {
+  const target = fleet.repositories[0].repository;
+  const snapshots = healthySnapshots();
+  snapshots.repositories[target].delivery = {
+    present: false,
+    templateVersion: null,
+  };
+  const audit = auditFleet(withDeliveryExpectation(target, true), snapshots);
+  assert.ok(audit.violationCount > 0);
+  assert.match(
+    formatFleetReport(audit),
+    /delivery contract is expected but `\.delivery-contract\.json` is absent/,
+  );
+  assert.match(formatFleetReport(audit), /Delivery: missing/);
+});
+
+test("a delivery contract present when not expected is a note, not drift", () => {
+  const target = fleet.repositories[0].repository;
+  const snapshots = healthySnapshots();
+  snapshots.repositories[target].delivery = {
+    present: true,
+    templateVersion: "1.4.0",
+  };
+  // `fleet` itself declares `deliveryContract: false` for every current member, so this exercises
+  // the "not expected" branch directly, with no override needed.
+  const audit = auditFleet(fleet, snapshots);
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /delivery contract is present at template version 1\.4\.0 though this repository is not declared to carry one/,
+  );
+  assert.match(formatFleetReport(audit), /Delivery: -/);
 });

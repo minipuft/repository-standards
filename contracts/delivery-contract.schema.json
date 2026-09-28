@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/minipuft/repository-standards/main/contracts/delivery-contract.schema.json",
+  "title": "Delivery contract consumer answers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["templateVersion", "answers"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "templateVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "repository-standards version whose template last wrote the managed files."
+    },
+    "answers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Conventional-commit scopes the consumer accepts."
+        },
+        "adrDir": {
+          "type": "string",
+          "description": "Repository-relative directory holding architecture decision records."
+        },
+        "defaultBranch": {
+          "type": "string",
+          "description": "Branch pull requests target."
+        }
+      }
+    }
+  }
+}

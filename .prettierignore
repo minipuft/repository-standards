@@ -4,3 +4,9 @@
 # check — with no author able to fix it, because the next regeneration undoes the fix.
 # A generator-owned artifact is ignored here rather than formatted.
 CHANGELOG.md
+
+# templates/delivery-contract/commitlint.config.mjs carries a {{scopes}} placeholder that
+# `install` renders into real JS; until then it is not valid JS and prettier's parser fails on it.
+templates/delivery-contract/commitlint.config.mjs
+# .husky/commit-msg is a shell script, not JS/JSON/etc — prettier has no parser for it.
+templates/delivery-contract/.husky/
