@@ -1,19 +1,53 @@
 {
   "files": [
-    { "path": "commitlint.rules.mjs", "class": "managed" },
-    { "path": "commitlint.config.mjs", "class": "seeded", "render": true },
-    { "path": ".husky/commit-msg", "class": "managed", "mode": "0755" },
-    { "path": ".github/workflows/pr-conventions.yml", "class": "managed" },
-    { "path": ".github/pull_request_template.md", "class": "seeded" },
-    { "path": "scripts/pr-check.mjs", "class": "managed", "mode": "0755" },
-    { "path": "scripts/pr-body.mjs", "class": "managed", "mode": "0755" },
+    {
+      "path": "commitlint.rules.mjs",
+      "class": "managed"
+    },
+    {
+      "path": "commitlint.config.mjs",
+      "class": "seeded",
+      "render": true
+    },
+    {
+      "path": ".husky/commit-msg",
+      "class": "managed",
+      "mode": "0755",
+      "render": true
+    },
+    {
+      "path": ".github/workflows/pr-conventions.yml",
+      "class": "managed",
+      "render": true
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "class": "seeded"
+    },
+    {
+      "path": "scripts/pr-check.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "scripts/pr-body.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
     {
       "path": "scripts/validate-pr-body.mjs",
       "class": "managed",
       "mode": "0755"
     },
-    { "path": "scripts/adr.mjs", "class": "managed", "mode": "0755" },
-    { "path": "docs/adr/0000-template.md", "class": "seeded" }
+    {
+      "path": "scripts/adr.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "docs/adr/0000-template.md",
+      "class": "seeded"
+    }
   ],
   "answers": {
     "scopes": {
@@ -30,6 +64,11 @@
       "type": "string",
       "default": "main",
       "description": "the branch PRs target"
+    },
+    "packageManager": {
+      "type": "string",
+      "default": "npm",
+      "description": "npm, pnpm, or bun; chooses the install/exec commands rendered into CI and the commit-msg hook"
     }
   }
 }

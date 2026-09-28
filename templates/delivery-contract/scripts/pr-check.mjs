@@ -40,7 +40,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,59 @@ const REPO_ROOT = path.resolve(
   "..",
 );
 const VALIDATOR = path.join(REPO_ROOT, "scripts", "validate-pr-body.mjs");
+
+/**
+ * The `commitlint` exec prefix and install-remediation hint per `answers.packageManager`, mirrored
+ * from `bin/delivery-contract.cjs`'s `PACKAGE_MANAGER_DERIVED` (`{{pmExec}}` renders the workflow's
+ * copy; this is the same choice made for the local script, which has no placeholder to render
+ * into — it reads the consumer's own answer at run time instead).
+ */
+const EXEC_PREFIX_BY_PACKAGE_MANAGER = {
+  npm: ["npx", "--no", "--"],
+  pnpm: ["pnpm", "exec"],
+  bun: ["bunx"],
+};
+const INSTALL_HINT_BY_PACKAGE_MANAGER = {
+  npm: "npm install",
+  pnpm: "pnpm install",
+  bun: "bun install",
+};
+
+/**
+ * Walks up from `startDir` to find `.delivery-contract.json` — the consumer's own answers file —
+ * rather than assuming it sits exactly at `REPO_ROOT`. Returns null when none is found (an
+ * uninstalled contract, or a checkout laid out unusually); callers fall back to npm in that case,
+ * the same default `resolveAnswers` uses when a consumer has not yet chosen.
+ */
+function findConsumerRoot(startDir) {
+  let dir = startDir;
+  for (;;) {
+    if (existsSync(path.join(dir, ".delivery-contract.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function consumerPackageManager() {
+  const consumerRoot = findConsumerRoot(
+    path.dirname(fileURLToPath(import.meta.url)),
+  );
+  if (!consumerRoot) return "npm";
+  try {
+    const document = JSON.parse(
+      readFileSync(path.join(consumerRoot, ".delivery-contract.json"), "utf8"),
+    );
+    const packageManager = document.answers?.packageManager;
+    return packageManager in EXEC_PREFIX_BY_PACKAGE_MANAGER
+      ? packageManager
+      : "npm";
+  } catch {
+    // A malformed or unreadable answers file is not this script's job to diagnose — every other
+    // subcommand already validates it against the schema. Fall back rather than throw here.
+    return "npm";
+  }
+}
 
 /**
  * One entry per gating step in `.github/workflows/pr-conventions.yml`.
@@ -92,23 +145,27 @@ export const MIRRORED_CI_STEPS = [
     label: "title passes commitlint.config.mjs",
     needsAuthoredInput: true,
     run: ({ title }) => {
-      // An absent binary and a rejected title both exit non-zero through `npx`, and conflating
-      // them would make this step's failure mean two different things — one of which the author
-      // cannot act on from the message. CI installs before it lints; a developer tree may not
-      // have. Not knowing is reported as a failure, never as a pass: an unchecked title is the
-      // exact hole this script exists to close.
+      // An absent binary and a rejected title both exit non-zero through the exec prefix, and
+      // conflating them would make this step's failure mean two different things — one of which
+      // the author cannot act on from the message. CI installs before it lints; a developer tree
+      // may not have. Not knowing is reported as a failure, never as a pass: an unchecked title is
+      // the exact hole this script exists to close. `node_modules/.bin/commitlint` is the same
+      // probe path for every package manager — pnpm and bun both populate it.
       if (
         !existsSync(path.join(REPO_ROOT, "node_modules", ".bin", "commitlint"))
       ) {
+        const packageManager = consumerPackageManager();
         return {
           status: 1,
           stdout:
             "commitlint is not installed at the repo root, so THE TITLE WAS NOT CHECKED.\n" +
-            "Install it and re-run:\n  npm install",
+            `Install it and re-run:\n  ${INSTALL_HINT_BY_PACKAGE_MANAGER[packageManager]}`,
           stderr: "",
         };
       }
-      return spawnSync("npx", ["--no", "--", "commitlint", "--verbose"], {
+      const [command, ...args] =
+        EXEC_PREFIX_BY_PACKAGE_MANAGER[consumerPackageManager()];
+      return spawnSync(command, [...args, "commitlint", "--verbose"], {
         cwd: REPO_ROOT,
         input: `${title}\n`,
         encoding: "utf8",
