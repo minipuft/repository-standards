@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { slugify } from "../templates/delivery-contract/scripts/adr.mjs";
 
 const adrPath = fileURLToPath(
   new URL("../templates/delivery-contract/scripts/adr.mjs", import.meta.url),
@@ -74,6 +75,35 @@ function changedLineCount(before, after) {
   assert.equal(a.length, b.length, "line count must not change");
   return a.filter((line, i) => line !== b[i]).length;
 }
+
+test("slugify leaves a short title unchanged", () => {
+  assert.equal(
+    slugify("Use Widgets for Everything"),
+    "use-widgets-for-everything",
+  );
+});
+
+test("slugify cuts a 90-character title on a whole word from the title, at or under 60 chars", () => {
+  const title =
+    "Git trailers are the join keys between a PR, its initiative and its decisions";
+  const longTitle = `${title} plus extra words to push past ninety characters total length`;
+  assert.ok(longTitle.length >= 90, longTitle.length);
+  const slug = slugify(longTitle);
+  assert.ok(slug.length <= 60, slug);
+  assert.ok(!slug.endsWith("-"), slug);
+  const words = longTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .split("-");
+  let prefix = "";
+  for (const word of words) {
+    const next = prefix ? `${prefix}-${word}` : word;
+    if (next.length > 60) break;
+    prefix = next;
+  }
+  assert.equal(slug, prefix);
+});
 
 test("index lists all three file styles with parsed fields", () => {
   const dir = threeStyles();

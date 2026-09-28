@@ -311,12 +311,15 @@ export function checkSet(adrs, readme) {
 // ---------------------------------------------------------------- writing (pure)
 
 export function slugify(title) {
-  return title
+  const full = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/g, "");
+    .replace(/^-+|-+$/g, "");
+  if (full.length <= 60) return full;
+  const cut = full.slice(0, 60);
+  const lastDash = cut.lastIndexOf("-");
+  const wholeWord = lastDash > 0 ? cut.slice(0, lastDash) : cut;
+  return wholeWord.replace(/-+$/g, "");
 }
 
 function templateBody(template) {
