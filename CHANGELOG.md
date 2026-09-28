@@ -5,6 +5,13 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.6.0](https://github.com/minipuft/repository-standards/compare/v1.5.0...v1.6.0) (2026-09-28)
+
+
+### Added
+
+* **delivery:** the contract renders for the consumer's package manager and PR template ([#22](https://github.com/minipuft/repository-standards/issues/22)) ([9bcdd3a](https://github.com/minipuft/repository-standards/commit/9bcdd3a0a71237735c9ba848a3d74390db4031d2))
+
 ## [1.5.0](https://github.com/minipuft/repository-standards/compare/v1.4.0...v1.5.0) (2026-09-28)
 
 
