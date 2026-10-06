@@ -93,7 +93,7 @@ commit SHA:
 
 The delivery contract is the commit, ADR, and release scaffolding a consumer shares with the rest
 of the fleet: outcome-named commit titles, a PR body that is checked and lands on `main` via
-squash-merge, `Initiative:`/`Decision:` trailers carried onto that squash commit, and an
+squash-merge, the `Plan:` footer and `Decision:` trailer carried onto that squash commit, and an
 append-only ADR log with a generated index. It installs into a consumer repository from a sibling
 checkout of this repository — set `REPOSITORY_STANDARDS_DIR` once, defaulting to
 `~/Applications/repository-standards`:
@@ -143,11 +143,12 @@ an uncommitted managed file is exactly what `update` later refuses to overwrite.
 | `scripts/validate-pr-body.mjs`                  |                                         |
 | `scripts/adr.mjs`                               |                                         |
 
-Every commit on an initiative carries an `Initiative:` trailer; a decision commit also carries
-`Decision:`. Query an arc, or find commits missing the trailer, with:
+The `Plan:` footer is the join key: a PR that executes a plan ends with one `Plan:` line naming
+the plan file, and a decision commit also carries `Decision: ADR-NNNN`. Query an initiative's PRs
+by the plan slug:
 
 ```bash
-git log --format='%h %(trailers:key=Initiative,valueonly) %s' | grep -v '^\S\+  '
+git log --grep='Plan: .*<slug>'
 ```
 
 ADRs are numbered, never renumbered or reused, and only their status changes after acceptance:
