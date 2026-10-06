@@ -5,6 +5,13 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.9.1](https://github.com/minipuft/repository-standards/compare/v1.9.0...v1.9.1) (2026-10-06)
+
+
+### Fixed
+
+* **delivery:** the package ships the delivery-contract bin and pins the answers schema to its release ([#34](https://github.com/minipuft/repository-standards/issues/34)) ([eaf22d8](https://github.com/minipuft/repository-standards/commit/eaf22d8ca31114609fa28ffe6737f8e66cd35894))
+
 ## [1.9.0](https://github.com/minipuft/repository-standards/compare/v1.8.0...v1.9.0) (2026-10-06)
 
 
