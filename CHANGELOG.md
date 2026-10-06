@@ -5,6 +5,19 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.9.0](https://github.com/minipuft/repository-standards/compare/v1.8.0...v1.9.0) (2026-10-06)
+
+
+### Added
+
+* **eslint:** fleet ESLint preset carrying the complexity, naming, error-boundary and logging standards ([#30](https://github.com/minipuft/repository-standards/issues/30)) ([39cccfa](https://github.com/minipuft/repository-standards/commit/39cccfab4d7d5624fb6dcd009eac578fb39d34f7))
+
+
+### Fixed
+
+* **delivery:** the managed PR workflow exempts a release-please pull request ([#32](https://github.com/minipuft/repository-standards/issues/32)) ([32ad7fe](https://github.com/minipuft/repository-standards/commit/32ad7fea5da58a56590a86a7d24649b17c77af03))
+* **delivery:** the Plan footer is the join key; the Initiative trailer is retired ([#33](https://github.com/minipuft/repository-standards/issues/33)) ([761cbec](https://github.com/minipuft/repository-standards/commit/761cbecd4bd096a44abe3c387372c3340f4de9fe))
+
 ## [1.8.0](https://github.com/minipuft/repository-standards/compare/v1.7.0...v1.8.0) (2026-09-28)
 
 
