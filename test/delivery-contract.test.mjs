@@ -370,3 +370,49 @@ test("--node-version-file renders the requested path into setup-node", (t) => {
 
   assert.equal(runReal(consumer, "check").status, 0);
 });
+
+// release-please opens its release PR with the repository owner's token, so the author is a
+// human and `user.type != 'Bot'` never exempts it; the branch name is the only stable marker.
+// Measured 2026-10-06 (claude-prompts-mcp): the body check ran against the "This release is too
+// large to preview" stub and failed the first release PR. Every step the Bot guard covers must
+// carry the branch-name exemption too, or a consumer's release PR meets a gate meant for authors.
+const BOT_GUARD = "github.event.pull_request.user.type != 'Bot'";
+const RELEASE_PLEASE_EXEMPTION =
+  "!startsWith(github.head_ref, 'release-please--')";
+
+function botGuardedStepsLackingExemption(workflow) {
+  const lacking = [];
+  let guarded = 0;
+  for (const step of workflow.split(/^ {6}- /m).slice(1)) {
+    const condition = step.match(/^ {8}if: (.+)$/m)?.[1];
+    if (!condition?.includes(BOT_GUARD)) continue;
+    guarded += 1;
+    if (!condition.includes(RELEASE_PLEASE_EXEMPTION)) {
+      lacking.push(step.split("\n", 1)[0]);
+    }
+  }
+  return { guarded, lacking };
+}
+
+test("every Bot-guarded step of the rendered workflow also exempts a release-please pull request", (t) => {
+  const consumer = realConsumer(t);
+  assert.equal(runReal(consumer, "install").status, 0);
+  const rendered = fs.readFileSync(path.join(consumer, WORKFLOW_PATH), "utf8");
+
+  const { guarded, lacking } = botGuardedStepsLackingExemption(rendered);
+  // Positive control: the probe sees the four authored-body steps, so an empty `lacking` is not
+  // the result of matching nothing.
+  assert.equal(guarded, 4);
+  assert.deepEqual(lacking, []);
+
+  // A twin differing in one step only: the exemption removed from the last guarded step must
+  // be reported by name.
+  const exemption = ` && ${RELEASE_PLEASE_EXEMPTION}`;
+  const at = rendered.lastIndexOf(exemption);
+  assert.notEqual(at, -1);
+  const mutated = rendered.slice(0, at) + rendered.slice(at + exemption.length);
+  assert.notEqual(mutated, rendered);
+  const result = botGuardedStepsLackingExemption(mutated);
+  assert.equal(result.lacking.length, 1);
+  assert.match(result.lacking[0], /^name: Lint the title/);
+});
