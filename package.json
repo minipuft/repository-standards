@@ -7,16 +7,38 @@
     "retire-done-plans": "bin/retire-done-plans.cjs",
     "delivery-contract": "bin/delivery-contract.cjs"
   },
+  "exports": {
+    "./eslint": "./eslint/index.mjs",
+    "./eslint/typed": "./eslint/typed.mjs",
+    "./*": "./*"
+  },
   "files": [
     "bin/retire-done-plans.cjs",
     "contracts/plan-retirement.schema.json",
-    "conventions/plan-frontmatter.md"
+    "conventions/plan-frontmatter.md",
+    "eslint/"
   ],
   "engines": {
     "node": ">=24"
   },
+  "peerDependencies": {
+    "eslint": "^9.0.0 || ^10.0.0",
+    "eslint-plugin-sonarjs": "^4.0.0",
+    "typescript-eslint": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "eslint": {
+      "optional": true
+    },
+    "eslint-plugin-sonarjs": {
+      "optional": true
+    },
+    "typescript-eslint": {
+      "optional": true
+    }
+  },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test \"test/**/*.test.mjs\"",
     "audit:fleet": "node scripts/audit-fleet.mjs",
     "validate:workflows": "node scripts/validate-workflows.mjs",
     "validate:renovate": "renovate-config-validator --strict renovate/default.json renovate/downstream.json",
@@ -25,8 +47,12 @@
   },
   "devDependencies": {
     "ajv": "8.20.0",
+    "eslint": "10.12.0",
+    "eslint-plugin-sonarjs": "4.2.2",
     "prettier": "3.6.2",
     "renovate": "44.7.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1",
     "yaml": "2.9.0"
   }
 }

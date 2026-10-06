@@ -17,6 +17,7 @@ Versioned consumer contracts, reusable validation, dependency policy, and read-o
 - `bin/delivery-contract.cjs`: portable commit/ADR/release scaffolding installer and updater.
 - `contracts/delivery-contract.schema.json`: canonical `.delivery-contract.json` answers schema.
 - `templates/delivery-contract/`: canonical managed and seeded files the contract installs.
+- `eslint/`: canonical fleet ESLint preset (`base`, `typed`) and its `fleet/*` rules.
 - Product-specific build, symlink, plugin, and release behavior remains local to each consumer.
 
 Consumers pin both the reusable workflow and its `standards-ref` input to the same immutable commit SHA:
@@ -162,6 +163,96 @@ node scripts/adr.mjs check
 the squash-merge and delete-branch-on-merge settings the contract depends on, reading owner/repo
 from the target checkout's `origin` remote. It never touches the default branch — changing that
 stays an owner act.
+
+## Fleet ESLint preset
+
+The coding standards a lint can check live here as one ESLint flat-config preset, so every
+repository reads the same thresholds from one place. Two layers:
+
+- `base` needs no type information. Use it in every repository; it applies to whatever files
+  your config already lints, so a TypeScript repository must already parse `.ts` (for example
+  with `typescript-eslint`'s parser).
+- `typed` needs type information. Add it where your config sets
+  `parserOptions.project` or `parserOptions.projectService`. It is a separate entry point, so a
+  JavaScript-only repository never installs `typescript-eslint`.
+
+The package is the same pinned tarball the other standards ship in. Its peers are optional, so
+a repository that only uses `retire-done-plans` installs nothing extra; a repository that lints
+installs them itself:
+
+```bash
+npm install --save-dev eslint eslint-plugin-sonarjs typescript-eslint
+```
+
+```js
+// eslint.config.mjs
+import { base } from "@minipuft/repository-standards-validation/eslint";
+import { typed } from "@minipuft/repository-standards-validation/eslint/typed";
+
+export default [
+  // ...your parser and file setup
+  ...base,
+  ...typed,
+  {
+    files: ["**/*.ts"],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+];
+```
+
+| Rule                                      | Setting          | Standard (source)                                 | Why this threshold                                                                  |
+| ----------------------------------------- | ---------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `sonarjs/cognitive-complexity`            | error, 15        | Complexity limits (`refactoring.md`)              | Cognitive, not cyclomatic: it weights nesting, which is what costs a reader         |
+| `complexity`                              | off              | Complexity limits (`refactoring.md`)              | Cyclomatic counts every `??` and `?.` as a branch and blocks idiomatic code         |
+| `max-depth`                               | error, 4         | Complexity limits (`refactoring.md`)              | Nesting is what cognitive complexity charges for; 4 is the ceiling                  |
+| `max-params`                              | error, 6         | Complexity limits (`refactoring.md`)              | 6, not 4: a constructor taking five injected services is dependency injection       |
+| `max-lines`                               | warn, 1000       | Size guidance (`refactoring.md`)                  | A warning only: size asks how many responsibilities a file holds, it does not block |
+| `no-empty`                                | error, catch too | Handle errors explicitly (`CLAUDE.md`)            | An empty catch discards the failure                                                 |
+| `fleet/no-log-and-swallow`                | warn             | Error and state boundaries (`architecture.md`)    | A catch that only logs reports success to its caller                                |
+| `fleet/no-scattered-logging`              | warn             | Wide-event logging (`wide-event-telemetry` skill) | One wide event per unit of work; a console line is the scattered form               |
+| `fleet/no-vague-suffix`                   | warn             | Naming standards (`CLAUDE.md`)                    | `Manager`, `Handler`, `Helper`, `Utils` and a domain-less `Service` name a category |
+| `@typescript-eslint/no-floating-promises` | error (`typed`)  | Error and state boundaries (`architecture.md`)    | An unawaited promise reports success before persistence returns                     |
+| `@typescript-eslint/naming-convention`    | warn (`typed`)   | Naming standards (`CLAUDE.md`)                    | No type decoration: `IUser`, `EStatus` and `strName` repeat what the type says      |
+
+The sources are rule files in the owner's Claude Code configuration; `eslint/index.mjs` exports
+the same table as `provenance`, and a test fails when the preset, that export, and this table
+disagree.
+
+`fleet/no-vague-suffix` asks the naming table's diagnostic question instead of proposing a
+name ("What does managing mean here?"). `Service` passes when a domain word precedes it
+(`OrderPricingService`), and `Handler` passes when the word before it names an event
+(`AuthRequestHandler`).
+
+**Overrides are declared in the consumer's config, after the preset**, because a later flat
+config object replaces an earlier one's setting for the same rule. Say why in a comment, so the
+next reader can tell a decision from drift:
+
+```js
+export default [
+  ...base,
+  {
+    // Adopted under a lint ratchet: existing functions over 15 are counted, not blocked.
+    rules: { "sonarjs/cognitive-complexity": ["warn", 15] },
+  },
+  {
+    // A CLI's output is console text by design.
+    files: ["src/cli/**"],
+    rules: { "fleet/no-scattered-logging": "off" },
+  },
+];
+```
+
+A single file opts out of the logging rule with a reason, which ESLint reports as unused once
+the file stops calling `console`:
+
+```js
+/* eslint-disable fleet/no-scattered-logging -- a CLI's output is console text by design */
+```
 
 ## Contract boundaries
 
