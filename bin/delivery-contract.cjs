@@ -44,8 +44,15 @@ const SCHEMA_PATH = path.join(
   "contracts",
   "delivery-contract.schema.json",
 );
-const SCHEMA_URL =
-  "https://raw.githubusercontent.com/minipuft/repository-standards/main/contracts/delivery-contract.schema.json";
+/**
+ * The answers file's `$schema` names the schema as released with the template version it pins,
+ * not whatever `main` carries. release-please tags `v<version>` on the commit that bumps
+ * package.json, so the URL resolves from the release on; adopting from an untagged commit is not
+ * a supported path.
+ */
+function schemaUrl() {
+  return `https://raw.githubusercontent.com/minipuft/repository-standards/v${templateVersion()}/contracts/delivery-contract.schema.json`;
+}
 const ANSWERS_FILENAME = ".delivery-contract.json";
 const FILE_CLASSES = ["managed", "seeded"];
 const COMMANDS = ["install", "update", "check", "settings"];
@@ -159,7 +166,7 @@ function readAnswersFile(repoRoot) {
 
 function writeAnswersFile(repoRoot, answers, omit = []) {
   const document = {
-    $schema: SCHEMA_URL,
+    $schema: schemaUrl(),
     templateVersion: templateVersion(),
     answers,
     ...(omit.length > 0 ? { omit } : {}),
