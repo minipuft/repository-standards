@@ -13,10 +13,13 @@
     "./*": "./*"
   },
   "files": [
+    "bin/delivery-contract.cjs",
     "bin/retire-done-plans.cjs",
+    "contracts/delivery-contract.schema.json",
     "contracts/plan-retirement.schema.json",
     "conventions/plan-frontmatter.md",
-    "eslint/"
+    "eslint/",
+    "templates/"
   ],
   "engines": {
     "node": ">=24"

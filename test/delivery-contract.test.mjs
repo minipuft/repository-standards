@@ -416,3 +416,44 @@ test("every Bot-guarded step of the rendered workflow also exempts a release-ple
   assert.equal(result.lacking.length, 1);
   assert.match(result.lacking[0], /^name: Lint the title/);
 });
+
+// -------------------------------------------------------------------------------------------
+// The answers file pins its `$schema` to the release of the template version it records.
+
+const PINNED_SCHEMA_URL = (version) =>
+  `https://raw.githubusercontent.com/minipuft/repository-standards/v${version}/contracts/delivery-contract.schema.json`;
+
+const PACKAGE_VERSION = JSON.parse(
+  fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+).version;
+
+test("install writes an answers-file $schema pinned to the template's release tag", (t) => {
+  const consumer = realConsumer(t);
+  const install = runReal(consumer, "install", "--scopes", "repo");
+  assert.equal(install.status, 0, install.stderr);
+  const document = JSON.parse(
+    fs.readFileSync(path.join(consumer, ".delivery-contract.json"), "utf8"),
+  );
+  assert.equal(document.$schema, PINNED_SCHEMA_URL(PACKAGE_VERSION));
+  assert.equal(document.templateVersion, PACKAGE_VERSION);
+  assert.match(document.$schema, new RegExp(`/v${PACKAGE_VERSION}/`));
+  assert.doesNotMatch(document.$schema, /\/main\//);
+});
+
+test("update rewrites an answers-file $schema that still points at main", (t) => {
+  const consumer = realConsumer(t);
+  execFileSync("git", ["init", "-q"], { cwd: consumer });
+  const install = runReal(consumer, "install", "--scopes", "repo");
+  assert.equal(install.status, 0, install.stderr);
+  const answersPath = path.join(consumer, ".delivery-contract.json");
+  const document = JSON.parse(fs.readFileSync(answersPath, "utf8"));
+  document.$schema =
+    "https://raw.githubusercontent.com/minipuft/repository-standards/main/contracts/delivery-contract.schema.json";
+  fs.writeFileSync(answersPath, `${JSON.stringify(document, null, 2)}\n`);
+  commitAll(consumer);
+
+  const update = runReal(consumer, "update");
+  assert.equal(update.status, 0, update.stderr);
+  const rewritten = JSON.parse(fs.readFileSync(answersPath, "utf8"));
+  assert.equal(rewritten.$schema, PINNED_SCHEMA_URL(PACKAGE_VERSION));
+});
