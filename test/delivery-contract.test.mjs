@@ -263,11 +263,12 @@ test("--self-test exits 0", () => {
 
 const WORKFLOW_PATH = ".github/workflows/pr-conventions.yml";
 
-// Captured from templates/delivery-contract/.github/workflows/pr-conventions.yml BEFORE this
-// change added {{pmInstall}}/{{pmExec}}/{{pmSetup}} — a `render: true` managed file re-renders
-// per consumer, so "byte-identical for the npm default" is the only way to prove this change
-// left every existing (npm) consumer's rendered file untouched. A copy read at test time instead
-// would just compare the template against itself and could never catch a regression here.
+// The npm-default render of templates/delivery-contract/.github/workflows/pr-conventions.yml,
+// first captured before {{pmInstall}}/{{pmExec}}/{{pmSetup}} existed — a `render: true` managed
+// file re-renders per consumer, so "byte-identical for the npm default" is the only way to prove a
+// rendering change left every existing (npm) consumer's file untouched. A copy read at test time
+// instead would just compare the template against itself and could never catch a regression here.
+// Re-capture it only for a deliberate change to the workflow itself, and review the diff.
 const NPM_DEFAULT_WORKFLOW = fs.readFileSync(
   fileURLToPath(
     new URL("./fixtures/pr-conventions.npm-default.yml", import.meta.url),
@@ -400,9 +401,9 @@ test("every Bot-guarded step of the rendered workflow also exempts a release-ple
   const rendered = fs.readFileSync(path.join(consumer, WORKFLOW_PATH), "utf8");
 
   const { guarded, lacking } = botGuardedStepsLackingExemption(rendered);
-  // Positive control: the probe sees the four authored-body steps, so an empty `lacking` is not
+  // Positive control: the probe sees the six authored-PR steps, so an empty `lacking` is not
   // the result of matching nothing.
-  assert.equal(guarded, 4);
+  assert.equal(guarded, 6);
   assert.deepEqual(lacking, []);
 
   // A twin differing in one step only: the exemption removed from the last guarded step must

@@ -10,3 +10,6 @@ CHANGELOG.md
 templates/delivery-contract/commitlint.config.mjs
 # .husky/commit-msg is a shell script, not JS/JSON/etc — prettier has no parser for it.
 templates/delivery-contract/.husky/
+# Real pull-request bodies, kept byte-for-byte: the squash-message tests rebuild the commit GitHub
+# wrote from them, and reformatting a table or a line changes what that commit contains.
+test/fixtures/squash-message/
