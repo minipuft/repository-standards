@@ -16,6 +16,8 @@ import { MIRRORED_CI_STEPS } from "../templates/delivery-contract/scripts/pr-che
 import {
   checkSquashMessage,
   loadParser,
+  OVERRIDE_BEGIN,
+  OVERRIDE_END,
   releasePleaseEntries,
   squashMessage,
 } from "../templates/delivery-contract/scripts/validate-squash-message.mjs";
@@ -263,7 +265,8 @@ test("the command exits 1 naming the line, the parser's message and the fixes", 
   assert.match(result.stdout, /squash message line 29, from PR body line 13:/);
   assert.match(result.stdout, /parser: unexpected token '\\n' at 29:60/);
   assert.match(result.stdout, /fenced code block/);
-  assert.match(result.stdout, /BEGIN_COMMIT_OVERRIDE/);
+  assert.match(result.stdout, /^ {6}BEGIN_COMMIT_ \+ OVERRIDE$/m);
+  assert.match(result.stdout, /#how-can-i-fix-release-notes$/m);
 });
 
 test("the command reads PR_BODY / PR_TITLE / PR_NUMBER and annotates under Actions", () => {
@@ -314,6 +317,76 @@ test("a missing vendored parser fails loudly and names the remedy; it never pass
     assert.equal(result.status, 1, result.stdout);
     assert.match(result.stdout, /NOT checked/);
     assert.match(result.stdout, /delivery-contract update/);
+  }
+});
+
+// ------------------------------------------------------------------ output a reader pastes
+
+// release-please opens an override block at the bare begin marker anywhere in a PR body, fences
+// and backticks included, and the template asks for pasted transcripts. So nothing this command
+// prints may carry a whole marker, or a pasted refusal becomes the commit release-please reads.
+const MARKERS = [OVERRIDE_BEGIN, OVERRIDE_END];
+const allOutput = (result) => `${result.stdout}${result.stderr}`;
+const BAD_OVERRIDE = `${PR_502.body}\n${OVERRIDE_BEGIN}\nnot a conventional header\n${OVERRIDE_END}\n`;
+const GOOD_OVERRIDE = fixture("body-501-with-override.md");
+
+function printed(t) {
+  const run = (body, title) =>
+    runScript(["--body-file", bodyFile(t, body), "--title", title]);
+  return {
+    squashRefusal: run(PR_501.body, PR_501.title),
+    overrideRefusal: run(BAD_OVERRIDE, PR_502.title),
+    overridePass: run(GOOD_OVERRIDE, PR_501.title),
+    help: runScript(["--help"]),
+    selfTest: runScript(["--self-test"]),
+  };
+}
+
+test("nothing the command prints carries a whole override marker", (t) => {
+  const outputs = printed(t);
+  // Positive controls: each run reached the path whose text is judged, and both override bodies
+  // carry the markers, so a clean result is not the absence of the advice.
+  assert.equal(outputs.squashRefusal.status, 1);
+  assert.equal(outputs.overrideRefusal.status, 1);
+  assert.match(outputs.overrideRefusal.stdout, /commit-override block/);
+  assert.equal(outputs.overridePass.status, 0);
+  assert.match(outputs.overridePass.stdout, /commit-override block/);
+  assert.equal(outputs.help.status, 2);
+  assert.match(outputs.help.stderr, /^usage:/);
+  assert.equal(outputs.selfTest.status, 0);
+  for (const marker of MARKERS) {
+    assert.ok(BAD_OVERRIDE.includes(marker) && GOOD_OVERRIDE.includes(marker));
+  }
+
+  for (const [name, result] of Object.entries(outputs)) {
+    for (const marker of MARKERS) {
+      assert.ok(
+        !allOutput(result).includes(marker),
+        `${name} prints ${marker}:\n${allOutput(result)}`,
+      );
+    }
+  }
+});
+
+test("the printed block becomes the real markers once the reader joins each split", (t) => {
+  const advice = printed(t).squashRefusal.stdout.replaceAll(" + ", "");
+  const begin = advice.indexOf(`      ${OVERRIDE_BEGIN}\n`);
+  assert.ok(begin !== -1, advice);
+  assert.ok(advice.indexOf(`      ${OVERRIDE_END}\n`) > begin, advice);
+});
+
+test("a body with a refusal pasted as a fenced Demonstration transcript still passes", (t) => {
+  const outputs = printed(t);
+  for (const name of ["squashRefusal", "overrideRefusal"]) {
+    const transcript = outputs[name].stdout.trimEnd();
+    const body = PR_502.body.replace(
+      "## Demonstration\n",
+      `## Demonstration\n\n\`\`\`\n${transcript}\n\`\`\`\n`,
+    );
+    assert.notEqual(body, PR_502.body);
+    const verdict = checkSquashMessage({ ...PR_502, body });
+    assert.equal(verdict.source, "squash", name);
+    assert.deepEqual(verdict.failures, [], name);
   }
 });
 
