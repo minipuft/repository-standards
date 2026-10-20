@@ -1,0 +1,54 @@
+## Summary
+
+After this merges, a prompt update changes only what the caller sent: adding or removing a list item leaves the rest of the YAML file as it was, resending a script tool keeps its `tool.yaml`, and the reply says which tools a `tools` list left unbound.
+
+- An update that adds or removes a list item (a prompt's `tools`, `arguments` or `chain_steps`, and the same in gates, frameworks and categories) changes only those lines. Before, the whole file was re-rendered: comments inside the list were dropped and long lines it never touched were re-wrapped.
+- Resending a script tool that already exists edits its `tool.yaml` in place. Comments, key order, `env`, `schemaFile`, `confirmMessage`, `enabled: false` and an authored `confirm: true` survive; before, the file was regenerated from nine fields and `confirm` was reset to `false`.
+- A tool created through `resource_manager` without `confirm` now asks for approval before it runs, as the loader and `docs/guides/script-tools.md` already said. Until now it was written as `confirm: false`.
+- Sending `tools` on an update still replaces the list. The parameter description now says so, and the reply names each tool left out and says its folder was kept.
+
+## Demonstration
+
+`resource_manager(resource_type:"prompt", action:"update", id:"reference_demo", tools:[word_count])` on the bundled prompt, which had two tools:
+
+**Before**
+
+```
+✅ Created tool 'word_count' in …/tools/word_count
+prompt.yaml   comments 5 → 1, 133-column description folded onto two lines
+tool.yaml     comments 20 → 0, keys reordered, 1248 → 221 bytes
+```
+
+**After**
+
+```
+✅ Updated tool 'word_count' in …/tools/word_count
+⚠️ Unbound tool 'text_digest': it was left out of `tools`, which replaces the list. Its folder was kept at …/tools/text_digest; to delete it, send tool_operation:"remove", tool_ids:["text_digest"], confirm:true.
+prompt.yaml   original minus the `- text_digest` line; comments 5 → 5
+tool.yaml     byte-identical
+```
+
+## How it was verified
+
+| Claim | Probe | Baseline → measured | Mutation that fails it |
+| --- | --- | --- | --- |
+| A list-length change keeps comments and untouched lines | `server/tests/integration/resources/yaml-source-preservation.test.ts` (hand-authored fixtures; block, flow and nested lists; first, middle, last and every item) plus a live drive on a scratch copy | `reference_demo` comments kept: 1 of 5 → 5 of 5; 41 tests | recurse only into equal-length lists (the old rule) → 21 tests fail |
+| Resending a tool keeps its `tool.yaml` | `server/tests/unit/mcp-tools/resource-manager/prompt/tool-yaml-resend-preservation.test.ts` plus a live resend of `word_count` and `text_digest` | regenerated (20 comments → 0) → byte-identical; 6 tests | plain serializer, no overlay → 4 fail |
+| A tool without `confirm` asks for approval | same file: a new tool loaded through `ScriptToolDefinitionLoader` | `confirm: false` written → only supplied fields written, loads with `confirm === true` | restore `confirm ?? false` → 2 fail |
+| The reply names unbound tools and says Updated for an existing one | `server/tests/unit/mcp-tools/resource-manager/prompt/unset-verb.test.ts` | dropped tool not mentioned, always "Created" → named with its kept folder, "Updated" | remove the unbound line → 1 fails; hard-code "Created" → 1 fails |
+| The skills-sync twin follows the new list edit | `server/tests/integration/skills-sync/export-command.test.ts` P6.259 (a) | pinned the old padded-bracket output → fixture plus one line; 75/75 | old list rule → it fails |
+| A bundled prompt edited through `resource_manager` on this branch needs no formatting pass | two calls updating `create_prompt`'s `tools` text, then `prettier --check` | 2 files, 1 line each, prettier exit 0 | — |
+| Nothing else regressed | `typecheck`, `lint:ratchet`, `typecheck:tests:ratchet`, `validate:all` | all exit 0; `validate:all` 87/87; published schema 38,466 → 38,619 bytes (ceiling 39,000) | — (unit, integration and e2e run in CI) |
+
+## Notes for Reviewers
+
+- `server/src/shared/utils/yaml/yaml-document-writer.ts`: list edits are made on the file's own tokens, and the token output is re-parsed and must equal the requested value, or the write falls back to re-rendering the document. That check also catches a scalar string such as `'5'` that would have been written unquoted and read back as a number.
+- In that same file, a comment between list items leaves with the item below it. A comment above the first item stays with the list. This follows the yaml library's attachment.
+- `server/src/mcp/tools/resource-manager/prompt/operations/file-operations.ts`: the `confirm` default change is a behavior change for tools created without it. It follows the documented default; flag it if you want the opposite.
+
+## Still open
+
+- Adding or removing a key, or a same-length list whose items change shape, still re-renders the whole document.
+
+Plan: `plans/reference/prompt-tools-update-2026-10-19.md`
+

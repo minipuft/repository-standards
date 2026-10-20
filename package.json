@@ -49,6 +49,7 @@
     "validate": "npm test && npm run validate:workflows && npm run validate:renovate && npm run format:check"
   },
   "devDependencies": {
+    "@conventional-commits/parser": "0.4.1",
     "ajv": "8.20.0",
     "eslint": "10.12.0",
     "eslint-plugin-sonarjs": "4.2.2",

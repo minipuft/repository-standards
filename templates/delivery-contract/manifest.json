@@ -40,6 +40,15 @@
       "mode": "0755"
     },
     {
+      "path": "scripts/validate-squash-message.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "scripts/vendor/conventional-commits-parser.cjs",
+      "class": "managed"
+    },
+    {
       "path": "scripts/adr.mjs",
       "class": "managed",
       "mode": "0755"

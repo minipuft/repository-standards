@@ -133,15 +133,40 @@ node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" check
 Commit right after `install` — it writes `.delivery-contract.json` alongside the scaffolding, and
 an uncommitted managed file is exactly what `update` later refuses to overwrite.
 
-| Managed (template owns it; drift fails `check`) | Seeded (written once; yours after that) |
-| ----------------------------------------------- | --------------------------------------- |
-| `commitlint.rules.mjs`                          | `commitlint.config.mjs`                 |
-| `.husky/commit-msg`                             | `.github/pull_request_template.md`      |
-| `.github/workflows/pr-conventions.yml`          | `docs/adr/0000-template.md`             |
-| `scripts/pr-check.mjs`                          |                                         |
-| `scripts/pr-body.mjs`                           |                                         |
-| `scripts/validate-pr-body.mjs`                  |                                         |
-| `scripts/adr.mjs`                               |                                         |
+| Managed (template owns it; drift fails `check`)  | Seeded (written once; yours after that) |
+| ------------------------------------------------ | --------------------------------------- |
+| `commitlint.rules.mjs`                           | `commitlint.config.mjs`                 |
+| `.husky/commit-msg`                              | `.github/pull_request_template.md`      |
+| `.github/workflows/pr-conventions.yml`           | `docs/adr/0000-template.md`             |
+| `scripts/pr-check.mjs`                           |                                         |
+| `scripts/pr-body.mjs`                            |                                         |
+| `scripts/validate-pr-body.mjs`                   |                                         |
+| `scripts/validate-squash-message.mjs`            |                                         |
+| `scripts/vendor/conventional-commits-parser.cjs` |                                         |
+| `scripts/adr.mjs`                                |                                         |
+
+The `PR Conventions` workflow checks the PR body against the template, lints the title with the
+repo's commitlint config, and checks that release-please can parse the commit the squash merge
+will write. The body and squash-commit checks each run a positive control first, and
+`scripts/pr-check.mjs` runs the same steps locally before `gh pr create`.
+
+The squash-commit check exists because release-please leaves out any commit its parser rejects,
+and says so only in a debug log: no changelog line, no version bump, no BREAKING CHANGE note. The
+squash commit is not the body as written. GitHub re-flows the body at 72 columns, so a long line
+can end up starting with `name(` and closing its parenthesis on the next line, which the parser
+refuses. On 2026-10-19 that dropped two claude-prompts-mcp PRs from a release, one of them a
+breaking change, although both bodies passed every other check.
+`scripts/validate-squash-message.mjs` rebuilds the squash message and reads it the way
+release-please 17.6.0 does: an override block in the PR body (release-please's
+`BEGIN_COMMIT_OVERRIDE` marker) replaces it. On failure it names the squash-message line, the
+PR-body line it came from, and the fix: put an example call on one line inside a fenced code
+block, reword the line, or add an override block.
+
+The parser is `@conventional-commits/parser` 0.4.1, the version release-please-action v5.0.0
+bundles. It is vendored as a managed file, so the check runs before any install, like the body
+check. Regenerate it from the pinned devDependency with
+`node scripts/vendor-conventional-commits-parser.mjs`; a test fails while the two differ. Move
+that devDependency only together with the release-please-action pin the fleet uses.
 
 The `Plan:` footer is the join key: a PR that executes a plan ends with one `Plan:` line naming
 the plan file, and a decision commit also carries `Decision: ADR-NNNN`. Query an initiative's PRs
