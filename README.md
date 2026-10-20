@@ -166,9 +166,13 @@ will write. The body and squash-commit checks each run a positive control first,
 `scripts/pr-check.mjs` runs the same steps locally before `gh pr create`.
 
 One step warns and never fails: `scripts/warn-contract-lag.mjs` compares `.delivery-contract.json`
-`templateVersion` with the latest published release of this repository and, when the contract is
-behind, annotates the PR with both versions and the remedy (`delivery-contract update` from a
-checkout at that release). On 2026-10-20 six fleet repositories sat at 1.7.0 under a 1.10.1
+`templateVersion` with the latest published release of this repository and annotates the PR with
+both versions and the remedy (`delivery-contract update` from a checkout at that release) only when
+the contract is behind AND the `templates/delivery-contract` tree differs between the installed tag
+and the latest tag (owner ruling Q1, the same rule the fleet audit applies): a release that touched
+only the audit, CI, docs or the CLI is silent. It makes at most three GitHub API calls (latest
+release, then the template tree at each tag) and prints "not compared" when the installed tag does
+not exist. On 2026-10-20 six fleet repositories sat at 1.7.0 under a 1.10.1
 release and nothing reported it. The step is a warning because a new release changes nothing a
 PR controls: failing would turn every open downstream PR red on release day, and the fix is its
 own adoption PR. It exits 0 on a network or API error too, and runs with `continue-on-error`.
