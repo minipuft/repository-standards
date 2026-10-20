@@ -34,11 +34,12 @@ tags: []
 ---
 ```
 
-| field             | meaning                                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------------------ |
-| `tracking`        | Canonical issue URL for this plan, or `none` when it is deliberately untracked                         |
-| `tracking_reason` | Why it is untracked. Valid **only** with `tracking: none`, and required by it                          |
-| `plan`            | On a companion document (implementation notes, validation log): the filename of the plan it belongs to |
+| field             | meaning                                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| `tracking`        | Canonical issue URL for this plan, or `none` when it is deliberately untracked                             |
+| `tracking_reason` | Why it is untracked. Valid **only** with `tracking: none`, and required by it                              |
+| `plan`            | On a companion document (implementation notes, validation log): the filename of the plan it belongs to     |
+| `publish`         | An initiative-level authorization to push and merge the plan's pull requests, as a string naming its scope |
 
 `tracking_reason` vocabulary: `local-only`, `offline`, `provider-unsupported`,
 `issues-disabled`, `operator-opt-out`.
