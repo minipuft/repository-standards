@@ -179,9 +179,102 @@ test("update never touches a seeded file, even when the template's copy changed"
 
   const result = run(f, "update");
   assert.equal(result.status, 0, result.stderr);
-  assert.doesNotMatch(result.stdout, new RegExp(SEEDED));
+  assert.doesNotMatch(
+    result.stdout,
+    new RegExp(`^(update|write|seed) +${SEEDED}`, "m"),
+  );
+  assert.match(result.stdout, new RegExp(`^seeded  ${SEEDED} differs`, "m"));
   assert.deepEqual(read(f.consumer, SEEDED), seededBefore);
   assert.equal(run(f, "check").status, 0);
+});
+
+// -------------------------------------------------------------------------------------------
+// seeded files are the consumer's once written: check and update never write or fail on them,
+// but print one advisory line when one differs from the template at the installed version.
+
+const SEEDED_PLAIN = "docs/template.md";
+
+/** The fixture plus a non-rendered seeded file, so both seeded shapes are covered. */
+function fixtureWithPlainSeeded(t) {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.template, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(f.template, SEEDED_PLAIN), "# Template v1\n");
+  const manifestPath = path.join(f.template, "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.files.push({ path: SEEDED_PLAIN, class: "seeded" });
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  return f;
+}
+
+for (const command of ["check", "update"]) {
+  test(`${command} names a seeded file that differs from the template, exits 0 and writes nothing`, (t) => {
+    const f = fixtureWithPlainSeeded(t);
+    run(f, "install");
+    fs.writeFileSync(
+      path.join(f.template, SEEDED_PLAIN),
+      "# Template v2 - the rule changed\n",
+    );
+    const before = read(f.consumer, SEEDED_PLAIN);
+
+    const result = run(f, command);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      new RegExp(
+        `^seeded  ${SEEDED_PLAIN} differs from the template; review it`,
+        "m",
+      ),
+    );
+    assert.equal(result.stdout.match(/^seeded /gm).length, 1);
+    assert.deepEqual(read(f.consumer, SEEDED_PLAIN), before);
+  });
+
+  test(`${command} is silent about seeded files that match the template`, (t) => {
+    const f = fixtureWithPlainSeeded(t);
+    run(f, "install");
+    const result = run(f, command);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /^seeded /m);
+  });
+
+  test(`${command} is silent about a rendered seeded file carrying the consumer's own scopes`, (t) => {
+    const f = fixture(t);
+    run(f, "install", "--scopes", "api,web");
+    assert.match(read(f.consumer, SEEDED).toString(), /\['api', 'web'\]/);
+    const result = run(f, command);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /^seeded /m);
+  });
+
+  test(`${command} names a rendered seeded file whose hand edit is not the consumer's answers`, (t) => {
+    const f = fixture(t);
+    run(f, "install", "--scopes", "api,web");
+    fs.appendFileSync(path.join(f.consumer, SEEDED), "// local rule\n");
+    const result = run(f, command);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`^seeded  ${SEEDED} differs`, "m"));
+    assert.match(result.stdout, /rendered with your answers/);
+  });
+
+  test(`${command} does not report a seeded file the consumer deleted`, (t) => {
+    const f = fixtureWithPlainSeeded(t);
+    run(f, "install");
+    fs.rmSync(path.join(f.consumer, SEEDED_PLAIN));
+    const result = run(f, command);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /^seeded /m);
+  });
+}
+
+test("a seeded difference does not change check's exit code when a managed file also drifted", (t) => {
+  const f = fixtureWithPlainSeeded(t);
+  run(f, "install");
+  fs.appendFileSync(path.join(f.consumer, MANAGED), "// edit\n");
+  fs.writeFileSync(path.join(f.template, SEEDED_PLAIN), "# Template v2\n");
+  const result = run(f, "check");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, new RegExp(`^drift  ${MANAGED}$`, "m"));
+  assert.match(result.stdout, /^seeded /m);
 });
 
 test("an answers file that violates the schema exits 2 on every subcommand", (t) => {

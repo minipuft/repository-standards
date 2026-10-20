@@ -130,6 +130,20 @@ node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" update
 node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" check
 ```
 
+Seeded files (the PR template, `commitlint.config.mjs`, the ADR template) are the repository's own
+once written, so `update` never overwrites them and `check` never fails on them. Both commands
+print one advisory line per seeded file whose bytes differ from the template at the installed
+version, so a rule the template retired (a PR template still asking for an `Initiative:` trailer)
+is found without reading the file:
+
+```text
+seeded  .github/pull_request_template.md differs from the template; review it (template: …/templates/delivery-contract/.github/pull_request_template.md)
+```
+
+A rendered seeded file (`commitlint.config.mjs`) is compared against its render from the answers
+in `.delivery-contract.json`, so the repository's own `scopes` are not a difference. The line
+changes no exit code; a seeded file the repository deleted is not reported.
+
 Commit right after `install` — it writes `.delivery-contract.json` alongside the scaffolding, and
 an uncommitted managed file is exactly what `update` later refuses to overwrite.
 
