@@ -1,0 +1,9 @@
+{
+  "branch": "main",
+  "contexts": [
+    "Double Quoted",
+    "Single 'Quoted'",
+    "Commented",
+    "Quoted # not a comment"
+  ]
+}

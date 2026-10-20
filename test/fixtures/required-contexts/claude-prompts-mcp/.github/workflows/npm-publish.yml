@@ -1,0 +1,132 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+# OIDC Trusted Publishing - no NPM_TOKEN needed
+# Setup required on npmjs.com:
+#   1. Go to https://www.npmjs.com/package/claude-prompts/access
+#   2. Add Trusted Publisher → GitHub Actions
+#   3. Configure: minipuft / claude-prompts-mcp / npm-publish.yml / npm
+#
+# The repository field must track the repo's CURRENT name: npm matches the OIDC
+# claim exactly and answers a mismatch with 404 on PUT — a rename here without
+# updating npmjs.com breaks every release publish (bit the v3.2.0 release,
+# 2026-08-07, after the claude-prompts → claude-prompts-mcp rename).
+
+permissions:
+  contents: read
+  id-token: write # Required for OIDC trusted publishing
+
+jobs:
+  publish:
+    # Accept only tag format: 'vX.Y.Z'
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Parse version from tag
+        id: version
+        run: |
+          tag='${{ github.event.release.tag_name }}'
+          if [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+.*)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          else
+            echo "::error::Unexpected tag format: $tag"
+            exit 1
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Parsed version: $version"
+
+      - name: Verify version alignment
+        run: |
+          pkg_version="$(node -p "require('./server/package.json').version")"
+          tag_version="${{ steps.version.outputs.version }}"
+
+          if [[ "$pkg_version" != "$tag_version" ]]; then
+            echo "::error::Version mismatch - tag: $tag_version, package.json: $pkg_version"
+            exit 1
+          fi
+
+          echo "✅ Version aligned: $tag_version"
+
+      - name: Verify changelog entry
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if ! grep -q "## \\[${version}\\]" CHANGELOG.md; then
+            echo "::error::Missing changelog entry for $version"
+            exit 1
+          fi
+          echo "✅ Changelog entry found for $version"
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      # `test:ci` runs `pr:check:self-test`, which lints a title with the root `commitlint`;
+      # without this install it reports the title as unchecked and fails before publish.
+      # `--ignore-scripts` skips the root husky prepare step.
+      - name: Install dependencies (root workspace)
+        working-directory: .
+        run: npm ci --ignore-scripts --no-audit
+
+      - name: Build
+        working-directory: server
+        run: npm run build:prod
+
+      - name: Verify packed npm consumer
+        working-directory: server
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/npm-package"
+          npm run verify:package-artifact -- --pack-destination "$RUNNER_TEMP/npm-package"
+
+      - name: Test
+        working-directory: server
+        run: npm run test:ci
+
+      # `test:ci` is unit-only, so nothing above this line exercises the documented surface over a
+      # real transport. A release is exactly the moment overstated claims become public, and Tier
+      # 3a found 9 of them by hand — this makes that class a red job instead of a reading task.
+      # Costs no tokens: the suite scripts the client the LLM would otherwise play.
+      - name: Verify documented claims
+        working-directory: server
+        run: npm run verify:claims
+
+      - name: Publish to npm (OIDC Trusted Publishing)
+        working-directory: server
+        run: |
+          echo "Publishing claude-prompts@${{ steps.version.outputs.version }} via OIDC"
+          # OIDC trusted publishing - no token needed, provenance auto-enabled
+          npm publish "$RUNNER_TEMP/npm-package/claude-prompts-${{ steps.version.outputs.version }}.tgz" --access public --provenance
+
+      # Downstream updates: the `sync-downstream` job in extension-publish.yml is the ONLY writer
+      # of a downstream claude-prompts version. It is not Renovate (the shared preset lists
+      # claude-prompts in ignoreDeps) and not Dependabot (no member runs it); a failed sync
+      # leaves every member on its old version until a later release is synced.
+      # Lock refresh per downstream: server/scripts/synchronize-downstream-lock.js
+      #   --workspace ../<repo> --package claude-prompts --version <published>
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## npm Publish" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "✅ Published claude-prompts@${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "[View on npm](https://www.npmjs.com/package/claude-prompts)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Publish failed" >> $GITHUB_STEP_SUMMARY
+          fi

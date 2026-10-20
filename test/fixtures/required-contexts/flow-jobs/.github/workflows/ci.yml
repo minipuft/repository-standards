@@ -1,0 +1,5 @@
+name: Flow
+
+on: pull_request
+
+jobs: {}

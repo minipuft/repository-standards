@@ -1,0 +1,697 @@
+name: Publish Extensions
+
+on:
+  # Trigger after npm-publish workflow completes successfully
+  workflow_run:
+    workflows: ["Publish to npm"]
+    types: [completed]
+  # Manual trigger for testing (bypasses npm dependency)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g., 1.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write # Needed to upload release assets
+
+jobs:
+  # Build and attach Desktop Extension (.mcpb) to release
+  desktop-extension:
+    # Run if: npm-publish succeeded OR manual trigger
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # For workflow_run: use the branch/tag from the triggering workflow
+          # For workflow_dispatch: use current ref
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from head_branch (tag name) or package.json
+            branch='${{ github.event.workflow_run.head_branch }}'
+            if [[ "$branch" =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              version="${BASH_REMATCH[1]}"
+            else
+              # Fallback: read from package.json
+              version=$(node -p "require('./server/package.json').version")
+            fi
+            echo "version=$version" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate required files
+        run: |
+          echo "Validating required files for Desktop extension..."
+          required_files="manifest.json .mcpbignore"
+          for file in $required_files; do
+            if [[ ! -f "$file" ]]; then
+              echo "ERROR: Missing required file: $file"
+              exit 1
+            fi
+            echo "  ✓ $file exists"
+          done
+          echo "All required files present."
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Install root packaging tools
+        run: npm ci --ignore-scripts
+
+      - name: Build Desktop Extension (.mcpb)
+        run: npm --prefix server run pack:mcpb
+
+      - name: Rename with version
+        run: |
+          package_version=$(node -p "require('./server/package.json').version")
+          [ "$package_version" = "${{ steps.version.outputs.version }}" ] || {
+            echo "::error::Requested version ${{ steps.version.outputs.version }} does not match package $package_version"
+            exit 1
+          }
+          mv claude-prompts.mcpb claude-prompts-${{ steps.version.outputs.version }}.mcpb
+
+      - name: Prepare CLI and source-map assets
+        run: npm --prefix server run prepare:release-artifacts -- --output-dir "$RUNNER_TEMP/release-assets"
+
+      - name: Upload to Release
+        if: github.event_name == 'workflow_run'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: |
+            claude-prompts-${{ steps.version.outputs.version }}.mcpb
+            ${{ runner.temp }}/release-assets/cpm-${{ steps.version.outputs.version }}.js
+            ${{ runner.temp }}/release-assets/cpm-${{ steps.version.outputs.version }}.js.sha256
+            ${{ runner.temp }}/release-assets/claude-prompts-${{ steps.version.outputs.version }}-sourcemaps.tar.gz
+          # Match Release Please tag format (include-component-in-tag: false)
+          tag_name: v${{ steps.version.outputs.version }}
+
+      - name: Upload Artifact (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: claude-prompts-${{ steps.version.outputs.version }}-release-assets
+          path: |
+            claude-prompts-${{ steps.version.outputs.version }}.mcpb
+            ${{ runner.temp }}/release-assets/cpm-${{ steps.version.outputs.version }}.js
+            ${{ runner.temp }}/release-assets/cpm-${{ steps.version.outputs.version }}.js.sha256
+            ${{ runner.temp }}/release-assets/claude-prompts-${{ steps.version.outputs.version }}-sourcemaps.tar.gz
+          if-no-files-found: error
+
+  plugin-dist:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact-name: dist-runtime-${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            branch='${{ github.event.workflow_run.head_branch }}'
+            if [[ "$branch" =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              version="${BASH_REMATCH[1]}"
+            else
+              version=$(node -p "require('./server/package.json').version")
+            fi
+            echo "version=$version" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate required files
+        run: |
+          echo "Validating required files for dist publish..."
+          required_files=".claude-plugin/plugin.json .mcp.json"
+          for file in $required_files; do
+            if [[ ! -f "$file" ]]; then
+              echo "ERROR: Missing required file: $file"
+              exit 1
+            fi
+            echo "  ✓ $file exists"
+          done
+          echo "All required files present."
+
+      # Present is not the same as current. Both files above are RENDERED from the canonical
+      # Agent Plugins manifests (root plugin.json / mcp.json), and both publishing jobs stage them
+      # verbatim into an artifact installers consume — the dist branch and the plugin archive. A
+      # stale render therefore ships a wrong version, license or server path to every installer,
+      # and the existence check above is structurally unable to see it.
+      #
+      # Runs before `npm ci` on purpose: the renderer uses only Node builtins, so a drifted render
+      # fails the release in seconds instead of after a full install and build.
+      - name: Verify rendered manifests match their canonical source
+        run: node scripts/render-distributions.mjs --check
+
+      - name: Install and build server
+        working-directory: server
+        run: |
+          npm ci
+          npm run build:prod
+
+      - name: Stage dist plugin tree
+        run: |
+          set -euo pipefail
+          STAGING_DIR="$RUNNER_TEMP/dist-staging"
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR/server"
+          cp -r .claude-plugin "$STAGING_DIR/"
+          cp .mcp.json "$STAGING_DIR/"
+          # No `|| true` here: hooks/ is a runtime component of the plugin, not an
+          # optional extra. A silenced copy is how `skills/` kept being staged for
+          # months after the directory was deleted, with nothing failing.
+          cp -r hooks "$STAGING_DIR/"
+          bash scripts/stage-server-runtime.sh server/dist "$STAGING_DIR/server/dist"
+          cp -r server/resources "$STAGING_DIR/server/"
+          cp server/config.json "$STAGING_DIR/server/"
+          # resolvePackageRoot() (startup.ts) verifies package identity by reading
+          # package.json beside dist/ — a layout without it fails startup on every
+          # plugin install. The old ServerRootDetector tolerated its absence, which
+          # is why this staging predates the requirement (caught by the smoke test
+          # on the v3.2.0 release, 2026-08-07).
+          cp server/package.json "$STAGING_DIR/server/"
+          tar -czf "$RUNNER_TEMP/dist-runtime.tar.gz" -C "$STAGING_DIR" .
+
+      - name: Validate dist artifact
+        run: |
+          set -euo pipefail
+          VERIFY_DIR="$RUNNER_TEMP/dist-verify"
+          rm -rf "$VERIFY_DIR"
+          mkdir -p "$VERIFY_DIR"
+          tar -xzf "$RUNNER_TEMP/dist-runtime.tar.gz" -C "$VERIFY_DIR"
+          test -f "$VERIFY_DIR/server/dist/index.js"
+          test -f "$VERIFY_DIR/server/dist/index.js.map"
+          test ! -e "$VERIFY_DIR/server/dist/cpm.js"
+          test ! -e "$VERIFY_DIR/server/dist/cpm.js.map"
+          test -f "$VERIFY_DIR/server/config.json"
+          test -f "$VERIFY_DIR/server/package.json"
+          test -d "$VERIFY_DIR/server/resources"
+          test -f "$VERIFY_DIR/.mcp.json"
+          test -f "$VERIFY_DIR/.claude-plugin/plugin.json"
+          test -f "$VERIFY_DIR/hooks/hooks.json"
+          # The plugin ships no agents since 2026-08-27: a delegated step's EXECUTION
+          # BRIEF is self-contained and runs on the host's general-purpose agent.
+          test ! -e "$VERIFY_DIR/agents"
+          # A throwaway workspace keeps --startup-test's runtime-state out of the
+          # unpacked artifact. It must exist: the server refuses a workspace that
+          # does not, instead of creating it.
+          SMOKE_WORKSPACE="$RUNNER_TEMP/dist-smoke-workspace"
+          mkdir -p "$SMOKE_WORKSPACE"
+          MCP_WORKSPACE="$SMOKE_WORKSPACE" node "$VERIFY_DIR/server/dist/index.js" --startup-test
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-runtime-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/dist-runtime.tar.gz
+
+  publish-dist:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      || github.event_name == 'workflow_dispatch'
+    needs: plugin-dist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist-runtime-${{ needs.plugin-dist.outputs.version }}
+          path: ${{ runner.temp }}/dist-artifact
+
+      - name: Publish dist branch
+        run: |
+          set -euo pipefail
+          ARTIFACT="$RUNNER_TEMP/dist-artifact/dist-runtime.tar.gz"
+          UNPACKED="$RUNNER_TEMP/dist-unpacked"
+          rm -rf "$UNPACKED"
+          mkdir -p "$UNPACKED"
+          tar -xzf "$ARTIFACT" -C "$UNPACKED"
+
+          git checkout --orphan dist
+          git rm -rf . >/dev/null 2>&1 || true
+          git clean -fdx
+          cp -r "$UNPACKED"/. .
+
+          test -f server/dist/index.js
+          test -f server/config.json
+          test -f server/package.json
+          test -d server/resources
+          test -f .mcp.json
+          test -f .claude-plugin/plugin.json
+
+          if [ -d .github ] || [ -d .claude ] || [ -d docs ] || [ -d server/src ] || [ -d server/tests ]; then
+            echo "ERROR: dist branch includes source-only paths."
+            exit 1
+          fi
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "chore: publish dist ${{ needs.plugin-dist.outputs.version }}"
+          git push origin dist --force
+
+  # Sync version to all downstream repos — centralized, no downstream config needed
+  sync-downstream:
+    # workflow_dispatch included deliberately. Every other job here already accepts both
+    # triggers; this one did not, so the documented manual-recovery path could rebuild and
+    # republish everything EXCEPT the job that most often needs re-running. When the v3.0.0
+    # and v3.0.1 syncs failed on a downstream token permission, re-dispatching reported
+    # success while silently skipping the sync — a green run that fixed nothing.
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      || github.event_name == 'workflow_dispatch'
+    needs: publish-dist
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: minipuft/minipuft-plugins
+            name: marketplace
+            merge_mode: auto
+          - repo: minipuft/gemini-prompts
+            name: gemini
+            merge_mode: auto
+          - repo: minipuft/opencode-prompts
+            name: opencode
+            merge_mode: auto
+          # codex-prompts consumes the engine from the registry like its siblings, so the
+          # same range+lock sync applies. Its own publish-dist workflow fires on the merge
+          # and republishes the `dist` branch the marketplace installs from, which is what
+          # keeps the listed plugin at the released engine without further action.
+          - repo: minipuft/codex-prompts
+            name: codex
+            merge_mode: auto
+    steps:
+      - name: Checkout upstream (for version)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+          path: upstream
+
+      - name: Extract version
+        id: version
+        run: |
+          version=$(node -p "require('./upstream/server/package.json').version")
+          major=$(echo "$version" | cut -d. -f1)
+          # License is read from plugin.json, never hardcoded — a literal here
+          # silently re-stamps stale licensing onto every downstream on release.
+          license=$(node -p "require('./upstream/.claude-plugin/plugin.json').license")
+          # Canonical Agent Plugins manifest, for the marketplace source assertion below.
+          # Read from the SOURCE rather than the rendered `.claude-plugin/` copy: the two are
+          # byte-identical by `validate:render-drift`, so reading the source costs nothing and
+          # keeps the repository identity single-authored.
+          repository=$(node -p "require('./upstream/plugin.json').repository")
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "major=$major" >> $GITHUB_OUTPUT
+          echo "license=$license" >> $GITHUB_OUTPUT
+          echo "repository=$repository" >> $GITHUB_OUTPUT
+
+      - name: Checkout downstream
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repo }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          path: downstream
+
+      # This job now runs npm (lockfile regeneration + the npm ci assertion below), so the
+      # Node/npm version must be pinned rather than inherited from whatever the runner ships —
+      # lockfileVersion differs across npm majors and would churn the downstream diff.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: upstream/.node-version
+
+      - name: Update ${{ matrix.name }}
+        working-directory: downstream
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MAJOR: ${{ steps.version.outputs.major }}
+          LICENSE: ${{ steps.version.outputs.license }}
+        run: |
+          set -euo pipefail
+
+          case "${{ matrix.name }}" in
+            marketplace)
+              jq --arg v "$VERSION" --arg l "$LICENSE" '
+                .plugins |= map(
+                  if .name == "claude-prompts"
+                  then .version = $v | .license = $l
+                  else .
+                  end
+                )
+              ' .claude-plugin/marketplace.json > tmp.json && mv tmp.json .claude-plugin/marketplace.json
+              ;;
+
+            gemini)
+              # `gemini-extension.json.version` is NOT written here. Gemini CLI resolves an
+              # extension's version from the git HEAD commit and treats that field as metadata,
+              # so stamping the upstream claude-prompts version onto a manifest whose `name` is
+              # "gemini-prompts" only created two version identities in one repo. release-please
+              # owns that field downstream; this job owns the dependency range below.
+              jq --arg r "^${MAJOR}.0.0" '.dependencies["claude-prompts"] = $r' package.json > tmp.json && mv tmp.json package.json
+              ;;
+
+            opencode)
+              # Update npm dependency range to match major
+              jq --arg r "^${MAJOR}.0.0" '.dependencies["claude-prompts"] = $r' package.json > tmp.json && mv tmp.json package.json
+              ;;
+
+            codex)
+              # Same range edit as its siblings. The plugin manifest version is NOT written
+              # here, for the reason spelled out in the gemini case: `.codex-plugin/plugin.json`
+              # carries codex-prompts' own identity, and stamping the engine's version onto it
+              # would create two version identities in one repo.
+              jq --arg r "^${MAJOR}.0.0" '.dependencies["claude-prompts"] = $r' package.json > tmp.json && mv tmp.json package.json
+              ;;
+          esac
+
+          # Regenerate the lockfile whenever package.json was touched.
+          #
+          # Editing package.json without the lockfile emits a PR that desynchronizes the two.
+          # That is not theoretical: it left opencode-prompts with `package.json ^2.0.0` against
+          # `lockfile claude-prompts@1.7.0`, which fails `npm ci` and therefore blocked its
+          # npm-publish workflow for months. The repo's own CI used `bun install` (which migrates
+          # the lockfile) so nothing surfaced it.
+          #
+          # Which members go through the lock sync is decided by what their package.json
+          # DECLARES, never by whether a lockfile exists. minipuft-plugins gained a lockfile
+          # for commitlint and husky (its #12) and declares no claude-prompts, so a
+          # `-f package-lock.json` guard sent the marketplace through a sync that always fails
+          # with "claude-prompts is absent from package-lock.json" — and that failed 5.1.0 and
+          # 5.1.1 for every member, because the matrix job fails as a whole. The marketplace
+          # takes the jq listing edit above and nothing else.
+          #
+          # The registry lags a new publication (npm took 2m38s for 5.1.1 and 6m13s for 5.1.0).
+          # The script first waits until `npm view` lists this version (15 minutes), then
+          # retries a bounded number of fresh lock resolutions, and fails rather than opening a
+          # PR whose lock points at another version.
+          if [ -f package.json ] && jq -e '((.dependencies // {}) + (.devDependencies // {})) | has("claude-prompts")' package.json >/dev/null; then
+            node ../upstream/server/scripts/synchronize-downstream-lock.js \
+              --workspace . \
+              --package claude-prompts \
+              --version "$VERSION"
+          fi
+
+      - name: Validate update
+        working-directory: downstream
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          LICENSE: ${{ steps.version.outputs.license }}
+          REPOSITORY: ${{ steps.version.outputs.repository }}
+        run: |
+          set -euo pipefail
+
+          case "${{ matrix.name }}" in
+            marketplace)
+              actual=$(jq -r '.plugins[] | select(.name == "claude-prompts") | .version' .claude-plugin/marketplace.json)
+              [ "$actual" = "$VERSION" ] || { echo "ERROR: marketplace version $actual != $VERSION"; exit 1; }
+              actual_license=$(jq -r '.plugins[] | select(.name == "claude-prompts") | .license' .claude-plugin/marketplace.json)
+              [ "$actual_license" = "$LICENSE" ] || { echo "ERROR: marketplace license $actual_license != $LICENSE"; exit 1; }
+              # Assert the marketplace resolves this repo by its REAL CURRENT NAME, not through a
+              # rename redirect. The install URL has no redirect mechanism of its own, so the day
+              # the old name is reclaimed by anyone, every install silently retargets — and this
+              # is the only check that would notice.
+              #
+              # Derived from the canonical plugin.json `repository`, never a literal: a second
+              # hardcoded slug is a second thing to update at the next rename, and the previous
+              # version of this guard hardcoded it. `.git` is appended because the marketplace
+              # source is a clone URL while `repository` is the web URL.
+              actual_url=$(jq -r '.plugins[] | select(.name == "claude-prompts") | .source.url' .claude-plugin/marketplace.json)
+              [ "$actual_url" = "${REPOSITORY}.git" ] || { echo "ERROR: marketplace source url $actual_url != ${REPOSITORY}.git — the listing points at a rename redirect or the wrong repo"; exit 1; }
+              # `dist` is the branch publish-dist force-pushes. A listing on any other ref serves
+              # a tree that release never wrote.
+              actual_ref=$(jq -r '.plugins[] | select(.name == "claude-prompts") | .source.ref' .claude-plugin/marketplace.json)
+              [ "$actual_ref" = "dist" ] || { echo "ERROR: marketplace source ref $actual_ref != dist"; exit 1; }
+
+              # The codex-prompts entry is listed in the same file and written by NOBODY —
+              # this job's jq above selects `claude-prompts` only, deliberately, because the
+              # engine's version is not codex-prompts' identity. Two invariants follow, and
+              # neither was checked until a stale listing nearly shipped:
+              #
+              #   ref must be `dist`, for the same reason as above — its `main` has no
+              #   node_modules, so a listing on any other ref serves a plugin whose MCP server
+              #   cannot start and whose hooks cannot launch.
+              #
+              #   version must be ABSENT. A field with no writer rots, and here it rots into a
+              #   real collision: Claude Code keys its install directory on the listing version
+              #   when one is present, so two different `dist` trees would land in one cache
+              #   directory. With no version it falls back to the commit SHA, which is correct
+              #   per push. Anthropic's and OpenAI's own marketplaces omit the field for exactly
+              #   the entries they do not version-sync.
+              codex_ref=$(jq -r '.plugins[] | select(.name == "codex-prompts") | .source.ref' .claude-plugin/marketplace.json)
+              [ "$codex_ref" = "dist" ] || { echo "ERROR: codex-prompts marketplace ref $codex_ref != dist"; exit 1; }
+              codex_version=$(jq -r '.plugins[] | select(.name == "codex-prompts") | has("version")' .claude-plugin/marketplace.json)
+              [ "$codex_version" = "false" ] || { echo "ERROR: the codex-prompts entry carries a version field, and nothing writes it. Remove it — Claude Code keys its install directory on that value and a stale one collides two dist trees into one cache dir."; exit 1; }
+
+              jq empty .claude-plugin/marketplace.json
+              ;;
+
+            gemini)
+              jq empty gemini-extension.json
+              jq empty package.json
+              dep=$(jq -r '.dependencies["claude-prompts"]' package.json)
+              echo "Dependency range updated to: $dep"
+              ;;
+
+            opencode)
+              jq empty package.json
+              dep=$(jq -r '.dependencies["claude-prompts"]' package.json)
+              echo "Dependency range updated to: $dep"
+              ;;
+
+            codex)
+              jq empty package.json
+              jq empty .codex-plugin/plugin.json
+              dep=$(jq -r '.dependencies["claude-prompts"]' package.json)
+              echo "Dependency range updated to: $dep"
+              # A `file:` range would silently reintroduce the defect this repo shipped for
+              # months: a vendored tarball is gitignored, so a clone cannot install it and the
+              # fleet auditor has no resolved lock version to read.
+              case "$dep" in
+                file:*) echo "ERROR: codex-prompts must consume the registry, not a file: tarball"; exit 1 ;;
+              esac
+              ;;
+          esac
+
+          # The assertion this job was missing. Everything above only confirms the strings this
+          # job just wrote — it cannot detect that package.json and package-lock.json disagree,
+          # which is exactly the state that shipped to opencode-prompts and blocked its releases.
+          #
+          # `npm ci` is the check with teeth: it refuses to install when the two are out of sync,
+          # and it is the same command the downstream publish workflows run. If this fails, the
+          # sync PR is never opened and the release surfaces the problem here instead of silently
+          # downstream.
+          #
+          # Gated on the same declaration as the lock sync above: a member that does not
+          # declare claude-prompts has no `node_modules/claude-prompts` to read back.
+          if [ -f package.json ] && jq -e '((.dependencies // {}) + (.devDependencies // {})) | has("claude-prompts")' package.json >/dev/null; then
+            echo "Asserting package.json and package-lock.json agree (npm ci)..."
+            if ! npm ci --ignore-scripts --no-audit --no-fund; then
+              echo "::error::${{ matrix.name }}: npm ci failed — package.json and package-lock.json are out of sync. Refusing to open a sync PR that would break the downstream publish path."
+              exit 1
+            fi
+            installed=$(node -p "require('./node_modules/claude-prompts/package.json').version")
+            echo "Lockfile resolves claude-prompts@$installed (upstream released $VERSION)"
+            [ "$installed" = "$VERSION" ] || {
+              echo "::error::${{ matrix.name }}: resolved $installed, not released version $VERSION"
+              exit 1
+            }
+            rm -rf node_modules
+          fi
+
+          echo "Validation passed for ${{ matrix.name }}"
+
+      - name: Create PR
+        id: create-pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          path: downstream
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          title: "chore: sync claude-prompts to v${{ steps.version.outputs.version }}"
+          body: |
+            Automated version sync from [claude-prompts v${{ steps.version.outputs.version }}](https://github.com/minipuft/claude-prompts-mcp/releases/tag/v${{ steps.version.outputs.version }}).
+
+            **Validated**: JSON parseable, version matches, upstream dist branch published.
+          branch: upstream-sync/v${{ steps.version.outputs.version }}
+          commit-message: "chore: sync claude-prompts to v${{ steps.version.outputs.version }}"
+
+      - name: Merge validated PR
+        if: steps.create-pr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          case "${{ matrix.merge_mode }}" in
+            auto)
+              gh pr merge ${{ steps.create-pr.outputs.pull-request-number }} \
+                --repo ${{ matrix.repo }} --merge --auto
+              ;;
+            *)
+              echo "::error::Unknown merge mode: ${{ matrix.merge_mode }}"
+              exit 1
+              ;;
+          esac
+
+  # Build Claude Code plugin archive (manual only)
+  claude-code-plugin:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            branch='${{ github.event.workflow_run.head_branch }}'
+            if [[ "$branch" =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              version="${BASH_REMATCH[1]}"
+            else
+              version=$(node -p "require('./server/package.json').version")
+            fi
+            echo "version=$version" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate required files
+        run: |
+          echo "Validating required files for Claude Code plugin..."
+          required_files=".claude-plugin/plugin.json .mcp.json"
+          for file in $required_files; do
+            if [[ ! -f "$file" ]]; then
+              echo "ERROR: Missing required file: $file"
+              exit 1
+            fi
+            echo "  ✓ $file exists"
+          done
+          echo "All required files present."
+
+      # Present is not the same as current. Both files above are RENDERED from the canonical
+      # Agent Plugins manifests (root plugin.json / mcp.json), and both publishing jobs stage them
+      # verbatim into an artifact installers consume — the dist branch and the plugin archive. A
+      # stale render therefore ships a wrong version, license or server path to every installer,
+      # and the existence check above is structurally unable to see it.
+      #
+      # Runs before `npm ci` on purpose: the renderer uses only Node builtins, so a drifted render
+      # fails the release in seconds instead of after a full install and build.
+      - name: Verify rendered manifests match their canonical source
+        run: node scripts/render-distributions.mjs --check
+
+      - name: Install and build server
+        working-directory: server
+        run: |
+          npm ci
+          npm run build:prod
+
+      - name: Create plugin archive
+        run: |
+          set -euo pipefail
+          mkdir -p .plugin-staging
+
+          # Copy plugin manifest and config
+          cp -r .claude-plugin .plugin-staging/
+          cp .mcp.json .plugin-staging/
+
+          # Copy hooks. No `|| true` — see the dist staging step above.
+          cp -r hooks .plugin-staging/
+
+          # Copy server (bundled - no node_modules needed)
+          mkdir -p .plugin-staging/server
+          bash scripts/stage-server-runtime.sh server/dist .plugin-staging/server/dist
+          cp -r server/resources .plugin-staging/server/
+          cp server/config.json .plugin-staging/server/
+          # Same requirement as the dist staging above: resolvePackageRoot() reads
+          # package.json beside dist/ for identity. This job is skipped on release
+          # runs, so the v3.2.1 dispatch was the first time the gap fired here.
+          cp server/package.json .plugin-staging/server/
+
+          # Validate staged runtime
+          test -f .plugin-staging/server/dist/index.js
+          test -f .plugin-staging/server/dist/index.js.map
+          test ! -e .plugin-staging/server/dist/cpm.js
+          test ! -e .plugin-staging/server/dist/cpm.js.map
+          test -f .plugin-staging/server/config.json
+          test -f .plugin-staging/server/package.json
+          test -d .plugin-staging/server/resources
+          test -f .plugin-staging/hooks/hooks.json
+          test ! -e .plugin-staging/agents
+          # Same throwaway workspace as the dist smoke test above, for the same
+          # reason: runtime-state stays out of the zip, and the directory must exist.
+          SMOKE_WORKSPACE="$RUNNER_TEMP/plugin-smoke-workspace"
+          mkdir -p "$SMOKE_WORKSPACE"
+          MCP_WORKSPACE="$SMOKE_WORKSPACE" node .plugin-staging/server/dist/index.js --startup-test
+
+          # Create archive
+          cd .plugin-staging
+          zip -r ../claude-prompts-plugin-${{ steps.version.outputs.version }}.zip .
+          cd ..
+
+      - name: Upload to Release
+        if: github.event_name == 'workflow_run'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: claude-prompts-plugin-${{ steps.version.outputs.version }}.zip
+          # Match Release Please tag format (include-component-in-tag: false)
+          tag_name: v${{ steps.version.outputs.version }}
+
+      - name: Upload Artifact (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: claude-prompts-plugin-${{ steps.version.outputs.version }}.zip
+          path: claude-prompts-plugin-${{ steps.version.outputs.version }}.zip
+
+  # NOTE: Downstream repos are synced automatically by the sync-downstream job above.
+  # - minipuft/minipuft-plugins (marketplace.json version + license)
+  # - minipuft/gemini-prompts (package.json dependency range + lockfile)
+  # - minipuft/opencode-prompts (package.json dependency range + lockfile)
+  # gemini-extension.json's own version is NOT synced — release-please owns it downstream.
+  # Every downstream has a required consumer contract, so PRs use protected auto-merge.

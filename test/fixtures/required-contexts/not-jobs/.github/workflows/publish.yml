@@ -1,0 +1,22 @@
+name: Workflow Title
+
+on: pull_request
+
+# The job shapes below are the input under test; prettier would rewrite them.
+# prettier-ignore
+jobs:
+  publish:
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/example
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Publish
+        run: npm publish
+  compact:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Compact Step
+      run: echo compact
