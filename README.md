@@ -12,6 +12,7 @@ Versioned consumer contracts, reusable validation, dependency policy, and read-o
 - `renovate/*.json`: canonical shareable Renovate presets.
 - `fleet.json` and `scripts/audit-fleet.mjs`: canonical read-only drift inventory and audit.
 - `conventions/plan-frontmatter.md`: canonical plan frontmatter schema, status vocabulary, and retirement contract.
+- `conventions/plan-rows.md`: canonical plan-row glyph set, stamp grammar and table parsing rules, enforced by the managed `scripts/validate-plan-rows.mjs`.
 - `bin/retire-done-plans.cjs`: portable plan-retirement executable for local and CI use.
 - `contracts/plan-retirement.schema.json`: fail-closed consumer configuration contract.
 - `bin/delivery-contract.cjs`: portable commit/ADR/release scaffolding installer and updater.
@@ -154,6 +155,8 @@ an uncommitted managed file is exactly what `update` later refuses to overwrite.
 | `.github/workflows/pr-conventions.yml`           | `docs/adr/0000-template.md`             |
 | `scripts/pr-check.mjs`                           |                                         |
 | `scripts/pr-body.mjs`                            |                                         |
+| `scripts/plan-rows.mjs`                          |                                         |
+| `scripts/validate-plan-rows.mjs`                 |                                         |
 | `scripts/validate-pr-body.mjs`                   |                                         |
 | `scripts/validate-squash-message.mjs`            |                                         |
 | `scripts/warn-contract-lag.mjs`                  |                                         |
@@ -224,18 +227,19 @@ node scripts/adr.mjs index
 node scripts/adr.mjs check
 ```
 
-Six more managed scripts answer questions every member has. None needs a dependency; each takes
+Seven more managed scripts answer questions every member has. None needs a dependency; each takes
 `--root <dir>` (default: the repository the script sits in), has a `--self-test`, and is wired by
 the member's own `package.json` or workflow, which the contract does not write:
 
-| Script                            | Fails when                                                                                                                                                              | Exits 0 and says why when                                                        |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `validate-github-action-pins.mjs` | an external `uses:` under `.github/`, or `actions/`, is not a 40-hex SHA with a same-line `# vX.Y.Z` comment, or a `docker://` ref has no `@sha256:` digest             | —                                                                                |
-| `validate-required-contexts.mjs`  | a context in `.github/required-contexts.json` matches no job `name:` (or id) in `.github/workflows/`, or names an interpolated `${{ }}` job                             | the JSON file is absent (creating it opts in)                                    |
-| `validate-lockfile-sync.mjs`      | a tracked `package-lock.json` disagrees with npm's `node_modules/.package-lock.json` beside it (version mismatch, missing, unexpected), or that tree is not installed   | the contract answers a package manager other than npm, or no lockfile is tracked |
-| `validate-git-hooks-active.mjs`   | a linked worktree would skip a tracked `.husky/*` hook because `.husky/_` was never generated there (git runs nothing and exits 0 for an unresolvable `core.hooksPath`) | the checkout is not a linked worktree, or no hook is tracked                     |
-| `create-worktree.mjs`             | `git worktree add` + husky in the new tree + a `node_modules` symlink per installed package directory cannot prove every tracked hook is live afterwards                | —                                                                                |
-| `merge-unreleased-changelog.mjs`  | the changelog it is pointed at does not exist                                                                                                                           | `[Unreleased]` is empty (it still keeps that header above the newest version)    |
+| Script                            | Fails when                                                                                                                                                                                              | Exits 0 and says why when                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `validate-github-action-pins.mjs` | an external `uses:` under `.github/`, or `actions/`, is not a 40-hex SHA with a same-line `# vX.Y.Z` comment, or a `docker://` ref has no `@sha256:` digest                                             | —                                                                                              |
+| `validate-required-contexts.mjs`  | a context in `.github/required-contexts.json` matches no job `name:` (or id) in `.github/workflows/`, or names an interpolated `${{ }}` job                                                             | the JSON file is absent (creating it opts in)                                                  |
+| `validate-lockfile-sync.mjs`      | a tracked `package-lock.json` disagrees with npm's `node_modules/.package-lock.json` beside it (version mismatch, missing, unexpected), or that tree is not installed                                   | the contract answers a package manager other than npm, or no lockfile is tracked               |
+| `validate-git-hooks-active.mjs`   | a linked worktree would skip a tracked `.husky/*` hook because `.husky/_` was never generated there (git runs nothing and exits 0 for an unresolvable `core.hooksPath`)                                 | the checkout is not a linked worktree, or no hook is tracked                                   |
+| `create-worktree.mjs`             | `git worktree add` + husky in the new tree + a `node_modules` symlink per installed package directory cannot prove every tracked hook is live afterwards                                                | —                                                                                              |
+| `merge-unreleased-changelog.mjs`  | the changelog it is pointed at does not exist                                                                                                                                                           | `[Unreleased]` is empty (it still keeps that header above the newest version)                  |
+| `validate-plan-rows.mjs`          | a plan row breaks `conventions/plan-rows.md`: a ☐/⊘ row with no stamp (⚠/✗ too under `--strict-stamps`), an unknown status glyph, a table split from its header, or a `status:` outside the vocabulary | there is no plans directory (`plansDirectory` in `plan-retirement.config.json`, else `plans/`) |
 
 The hook pair exists because `core.hooksPath` is the relative `.husky/_`, a directory husky
 generates and self-ignores, so a plain `git worktree add` yields a worktree where every hook is

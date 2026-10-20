@@ -35,6 +35,15 @@
       "mode": "0755"
     },
     {
+      "path": "scripts/plan-rows.mjs",
+      "class": "managed"
+    },
+    {
+      "path": "scripts/validate-plan-rows.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
       "path": "scripts/validate-pr-body.mjs",
       "class": "managed",
       "mode": "0755"

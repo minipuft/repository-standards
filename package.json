@@ -18,6 +18,7 @@
     "contracts/delivery-contract.schema.json",
     "contracts/plan-retirement.schema.json",
     "conventions/plan-frontmatter.md",
+    "conventions/plan-rows.md",
     "eslint/",
     "templates/"
   ],
