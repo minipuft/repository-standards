@@ -5,6 +5,13 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.10.0](https://github.com/minipuft/repository-standards/compare/v1.9.1...v1.10.0) (2026-10-20)
+
+
+### Added
+
+* **delivery:** pr checks refuse a squash commit release-please cannot parse ([#36](https://github.com/minipuft/repository-standards/issues/36)) ([57b0839](https://github.com/minipuft/repository-standards/commit/57b0839ce681d3acf59349580bb1b8b41559e6c8))
+
 ## [1.9.1](https://github.com/minipuft/repository-standards/compare/v1.9.0...v1.9.1) (2026-10-06)
 
 
