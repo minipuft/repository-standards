@@ -1,0 +1,6 @@
+name: c
+runs:
+  using: composite
+  steps:
+    - uses: owner/other@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v1
+      shell: bash
