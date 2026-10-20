@@ -18,6 +18,8 @@
 
 - **R11 (planner)** t3code #14 cannot merge: `custom/main` requires `Check` with `enforce_admins: true`, and `Check` fails on `custom/main` itself (run 39213759315: Lint = knip "Unused dependencies (3)", Test Web). The PR adds no failure (same three jobs on both). Owner decides how `custom/main` goes green.
 
+- **R12 (planner)** Consumer-pin lag excludes `package.json`/`package-lock.json`: Release Please changes them in every release, so counting them would restore the every-release lag Q1 removed. Cost: a verifier dependency bump alone does not flag consumers.
+
 ## Measured inputs (2026-10-20)
 
 - Delivery contract: 6 members at 1.7.0; claude-prompts-mcp at 1.10.1.
