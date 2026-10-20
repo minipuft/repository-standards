@@ -5,6 +5,18 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.13.0](https://github.com/minipuft/repository-standards/compare/v1.12.0...v1.13.0) (2026-10-20)
+
+
+### Added
+
+* **delivery:** six fleet-wide validators ship as managed delivery-contract scripts ([#49](https://github.com/minipuft/repository-standards/issues/49)) ([2a97c5d](https://github.com/minipuft/repository-standards/commit/2a97c5da516d31d87bb4c8ba44d60be7100cc478))
+
+
+### Documentation
+
+* the fleet plan records the v1.12.0 adoptions and the remaining owner steps ([#47](https://github.com/minipuft/repository-standards/issues/47)) ([f01d444](https://github.com/minipuft/repository-standards/commit/f01d4446e7398012917fb8ad5aae18dad49a81a7))
+
 ## [1.12.0](https://github.com/minipuft/repository-standards/compare/v1.11.0...v1.12.0) (2026-10-20)
 
 
