@@ -13,8 +13,10 @@
 - **R8 (planner)** No re-dispatch of the 5.1.1 sync: a dispatch from `main` builds dist from unreleased 6.0 commits; a dispatch at `v5.1.1` carries the guard defect. 6.0.0 is the recovery.
 - **R9 (planner)** Row 10 lands in claude-prompts-mcp under the owner's "auto-merge in our prompt servers" ruling.
 
-- **Q1 (OPEN, owner)** Lag is measured against the latest release (R4), so a release that changes only the audit, CI or docs flags every member. Recommended: lag = installed version older than the newest release whose `templates/delivery-contract/**` differs from the installed one. Rows 14–16 wait for this ruling.
+- **Q1 (RULED, owner 2026-10-20: a release that does not change the template is not lag)** A member lags only when its installed `templateVersion` is older than the newest release whose `templates/delivery-contract/**` differs from the template at the installed version. Releases that change only the audit, CI, docs or the CLI flag nobody. Consumer-pin lag follows the same rule for `.github/workflows/consumer-contract.yml` and its inputs, and preset lag for `renovate/downstream.json` (row 14). Rows 14–16 proceed.
 - **R10 (planner)** The local adoption skill (claude-prompts-mcp `.claude/skills/adopt-repository-standards/`, gitignored) carries Phase A (release), B (claude-prompts-mcp) and C (members), built from the six adoption step logs.
+
+- **R11 (planner)** t3code #14 cannot merge: `custom/main` requires `Check` with `enforce_admins: true`, and `Check` fails on `custom/main` itself (run 39213759315: Lint = knip "Unused dependencies (3)", Test Web). The PR adds no failure (same three jobs on both). Owner decides how `custom/main` goes green.
 
 ## Measured inputs (2026-10-20)
 
