@@ -157,10 +157,13 @@ can end up starting with `name(` and closing its parenthesis on the next line, w
 refuses. On 2026-10-19 that dropped two claude-prompts-mcp PRs from a release, one of them a
 breaking change, although both bodies passed every other check.
 `scripts/validate-squash-message.mjs` rebuilds the squash message and reads it the way
-release-please 17.6.0 does: an override block in the PR body (release-please's
-`BEGIN_COMMIT_OVERRIDE` marker) replaces it. On failure it names the squash-message line, the
-PR-body line it came from, and the fix: put an example call on one line inside a fenced code
-block, reword the line, or add an override block.
+release-please 17.6.0 does: a commit-override block in the PR body
+([release-please's README](https://github.com/googleapis/release-please/tree/v17.6.0#how-can-i-fix-release-notes))
+replaces it. On failure it names the squash-message line, the PR-body line it came from, and the
+fix: put an example call on one line inside a fenced code block, reword the line, or add an
+override block. release-please opens that block at the bare marker word anywhere in the body,
+inside a code fence too, so the script prints each marker split in two (`BEGIN_COMMIT_ +
+OVERRIDE`) and never whole: a refusal pasted into the Demonstration section stays inert.
 
 The parser is `@conventional-commits/parser` 0.4.1, the version release-please-action v5.0.0
 bundles. It is vendored as a managed file, so the check runs before any install, like the body
