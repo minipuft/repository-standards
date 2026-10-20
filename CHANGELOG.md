@@ -5,6 +5,18 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.12.0](https://github.com/minipuft/repository-standards/compare/v1.11.0...v1.12.0) (2026-10-20)
+
+
+### Added
+
+* **delivery:** a member is flagged as behind only when the files it uses changed ([#46](https://github.com/minipuft/repository-standards/issues/46)) ([c49b4fd](https://github.com/minipuft/repository-standards/commit/c49b4fda8df053001597845a2c2d8cb5e33d978b))
+
+
+### Documentation
+
+* the fleet plan records wave 1, the live audit and the open lag question ([#44](https://github.com/minipuft/repository-standards/issues/44)) ([00ca7f2](https://github.com/minipuft/repository-standards/commit/00ca7f2e6684c9d2c438d9c93478fecc5b3781ee))
+
 ## [1.11.0](https://github.com/minipuft/repository-standards/compare/v1.10.1...v1.11.0) (2026-10-20)
 
 
