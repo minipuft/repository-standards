@@ -22,8 +22,10 @@ jobs:
       - name: Release Please
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          # github.token is sufficient here: nothing in this repository is triggered by a
-          # release. Consumers adopt a new tag by PR, which the fleet audit surfaces.
-          token: ${{ github.token }}
+          # Not github.token: GitHub holds CI on a pull request that token pushed at
+          # `action_required`, so the release PR's required `validate` check never reported
+          # without a manual approval (every release from 1.9.0 to 1.10.1). The fallback keeps
+          # forks, which cannot read the secret, opening release PRs as before.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
