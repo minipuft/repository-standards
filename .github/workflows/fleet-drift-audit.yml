@@ -1,8 +1,16 @@
 name: Fleet Drift Audit
 
+# Runs weekly, on demand, and whenever a release is published: a release is the moment every
+# member falls one version behind, and the audit fails on that lag (scripts/audit-fleet.mjs).
+# Release Please publishes with a personal token (RELEASE_PLEASE_TOKEN, release-please.yml), which
+# is what lets the `release` event start this workflow. Its fallback, the workflow token, starts no
+# workflows, so without that secret the release trigger is silent and the weekly run still catches
+# the lag.
 on:
   schedule:
     - cron: "17 6 * * 1"
+  release:
+    types: [published]
   workflow_dispatch: {}
 
 permissions:
@@ -15,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The audit resolves the latest release's commit, and names the release each downstream
+          # pin points at, from local tags. A depth-1 checkout carries none.
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version

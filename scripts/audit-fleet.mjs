@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -160,6 +161,57 @@ async function deliveryContractSnapshot(repository, ref) {
   }
 }
 
+// The latest repository-standards release, read from THIS checkout rather than the releases API.
+//
+// The version is `.release-please-manifest.json`'s `"."` entry: Release Please's own record of the
+// last version it released, and the version it names the tag from (`v` + version, per
+// release-please-config.json). It changes only in the merge of a release PR, and that merge is
+// the commit the tag lands on, so on `main` (cron, dispatch) and on the tag itself (`release:
+// published`) it IS the latest release. It needs no request, so a flaky or rate-limited API can
+// never turn into a false lag failure, and it cannot be stale against the run that reads it.
+//
+// The tag's commit comes from local tags, which the workflow's checkout fetches
+// (`fetch-depth: 0`). The same listing names the release a downstream pin points at, which is how
+// the report says how far behind it is. A tag not yet created (the seconds between a release PR's
+// merge and its tag) or a checkout without tags leaves `commit` unset, and the auditor reports pin
+// lag as unverified rather than failing.
+function latestStandardsRelease() {
+  let version;
+  try {
+    version = JSON.parse(
+      readFileSync(resolve(root, ".release-please-manifest.json"), "utf8"),
+    )["."];
+  } catch (error) {
+    return { unexplained: `.release-please-manifest.json: ${error.message}` };
+  }
+  if (!version) {
+    return { unexplained: '.release-please-manifest.json has no "." entry' };
+  }
+  let listing;
+  try {
+    listing = execFileSync(
+      "git",
+      [
+        "for-each-ref",
+        "--format=%(refname:short) %(objectname) %(*objectname)",
+        "refs/tags",
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+  } catch (error) {
+    return { version, unexplained: `git tags unreadable: ${error.message}` };
+  }
+  const tagsByCommit = {};
+  let commit;
+  for (const line of listing.split("\n").filter(Boolean)) {
+    // An annotated tag's own object is not a commit; `*objectname` is the commit it peels to.
+    const [tag, object, peeled] = line.split(" ");
+    tagsByCommit[peeled || object] ??= tag;
+    if (tag === `v${version}`) commit = peeled || object;
+  }
+  return { version, commit, tagsByCommit };
+}
+
 async function repositorySnapshot(entry, mergeMode) {
   const identity = await repositoryIdentity(entry.repository);
   const delivery = await deliveryContractSnapshot(
@@ -238,6 +290,7 @@ async function main() {
     // The upstream is not a fleet member, so its name is resolved here rather than in
     // repositorySnapshot — and it is the one that actually rotted.
     upstreamIdentity: await repositoryIdentity(fleet.upstream.repository),
+    standardsRelease: latestStandardsRelease(),
     repositories: {},
   };
   for (const entry of fleet.repositories) {

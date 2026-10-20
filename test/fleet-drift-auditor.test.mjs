@@ -8,7 +8,26 @@ import {
   VERSION_SOURCES,
 } from "../lib/fleet-drift-auditor.mjs";
 
-const fleet = JSON.parse(readFileSync("fleet.json", "utf8"));
+// The latest repository-standards release every healthy fixture is measured against.
+const LATEST = {
+  version: "1.4.0",
+  commit: "a".repeat(40),
+  tagsByCommit: { ["a".repeat(40)]: "v1.4.0", ["b".repeat(40)]: "v1.3.0" },
+};
+const OLD_PIN = "b".repeat(40);
+
+// The real inventory is what the schema and identity tests read. Every audit below runs against
+// a copy whose consumer pins are the fixture's latest release: the real `standardsRef` values are
+// whatever the fleet is pinned to today, and a healthy fixture has to be current.
+const inventory = JSON.parse(readFileSync("fleet.json", "utf8"));
+const fleet = {
+  ...inventory,
+  repositories: inventory.repositories.map((entry) =>
+    entry.consumerContract === false
+      ? entry
+      : { ...entry, standardsRef: LATEST.commit },
+  ),
+};
 const schema = JSON.parse(readFileSync("contracts/fleet.schema.json", "utf8"));
 
 function healthySnapshots() {
@@ -32,7 +51,9 @@ function healthySnapshots() {
         profile: entry.profile,
         upstreamWriter: entry.claudePromptsWriter,
       },
-      caller: `uses: owner/workflow@${entry.standardsRef}\nstandards-ref: ${entry.standardsRef}\n`,
+      // The shape downstream callers carry: the reusable workflow pinned by commit, plus the
+      // `standards-ref` input the verifier checks out.
+      caller: `uses: minipuft/repository-standards/.github/workflows/consumer-contract.yml@${entry.standardsRef} # v1.4.0\nwith:\n  standards-ref: ${entry.standardsRef}\n`,
       protectionChecks: [...entry.requiredChecks],
       checkOutcomes: Object.fromEntries(
         entry.requiredChecks.map((check) => [check, "success"]),
@@ -61,6 +82,7 @@ function healthySnapshots() {
       id: fleet.upstream.repositoryId,
       fullName: fleet.upstream.repository,
     },
+    standardsRelease: structuredClone(LATEST),
     repositories,
   };
 }
@@ -73,7 +95,7 @@ function mutatedAudit(repository, mutate) {
 
 test("fleet inventory satisfies its schema", () => {
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
-  assert.equal(validate(fleet), true, JSON.stringify(validate.errors));
+  assert.equal(validate(inventory), true, JSON.stringify(validate.errors));
 });
 
 test("healthy snapshots contain no unexplained drift", () => {
@@ -490,4 +512,172 @@ test("a fleet entry with consumerContract: false skips consumer-contract checks"
   const result = audit.results.find((entry) => entry.repository === target);
   assert.equal(result.violations.length, 0, JSON.stringify(result.violations));
   assert.match(result.notes.join("\n"), /consumer contract checks skipped/);
+});
+
+// ------------------------------------------------------- lag against the latest standards release
+
+// One member a minor behind on its delivery contract, one consumer whose caller (and fleet.json)
+// still pin an older release. Measured 2026-10-20: six members at 1.7.0 and three callers at
+// v1.0.0 under a 1.10.1 release, and the audit passed every one of them.
+test("a delivery contract one minor behind and an old consumer pin are both drift, by name", () => {
+  const behindPin = {
+    ...fleet,
+    repositories: fleet.repositories.map((entry) =>
+      entry.repository === "minipuft/gemini-prompts"
+        ? { ...entry, standardsRef: OLD_PIN }
+        : entry,
+    ),
+  };
+  const snapshots = healthySnapshots();
+  snapshots.repositories["minipuft/t3code"].delivery.templateVersion = "1.3.0";
+  snapshots.repositories["minipuft/gemini-prompts"].caller =
+    `uses: minipuft/repository-standards/.github/workflows/consumer-contract.yml@${OLD_PIN} # v1.3.0\n` +
+    `with:\n  standards-ref: ${OLD_PIN}\n`;
+  const audit = auditFleet(behindPin, snapshots);
+  const report = formatFleetReport(audit);
+
+  assert.equal(audit.violationCount, 2, report);
+  const failing = audit.results
+    .filter((result) => result.violations.length)
+    .map((result) => result.repository)
+    .sort();
+  assert.deepEqual(failing, ["minipuft/gemini-prompts", "minipuft/t3code"]);
+  assert.match(
+    report,
+    /## FAIL — minipuft\/t3code\n\n- Delivery: 1\.3\.0\n- Drift: delivery contract template is 1\.3\.0, latest repository-standards release is 1\.4\.0 \(1 minor version behind\)/,
+  );
+  assert.match(
+    report,
+    /Drift: consumer-contract caller pins repository-standards at uses bbbbbbb \(v1\.3\.0\), standards-ref bbbbbbb \(v1\.3\.0\), latest release is v1\.4\.0 \(aaaaaaa\)/,
+  );
+  assert.match(
+    report,
+    /Latest repository-standards release: v1\.4\.0 \(aaaaaaa\)/,
+  );
+});
+
+for (const [name, latest, found, expected] of [
+  [
+    "a minor behind across a patch boundary is drift",
+    "1.4.0",
+    "1.3.9",
+    /1 minor version behind/,
+  ],
+  [
+    "a patch release behind is drift",
+    "1.4.2",
+    "1.4.0",
+    /2 patch versions behind/,
+  ],
+  ["a major behind is drift", "1.4.0", "0.9.0", /1 major version behind/],
+]) {
+  test(name, () => {
+    const snapshots = healthySnapshots();
+    snapshots.standardsRelease.version = latest;
+    snapshots.repositories["minipuft/cloudySky"].delivery.templateVersion =
+      found;
+    const audit = auditFleet(fleet, snapshots);
+    const cloudySky = audit.results.find(
+      (entry) => entry.repository === "minipuft/cloudySky",
+    );
+    assert.equal(cloudySky.violations.length, 1);
+    assert.match(formatFleetReport(audit), expected);
+  });
+}
+
+test("a member on the latest release, or ahead of it, contributes no lag", () => {
+  for (const templateVersion of ["1.4.0", "1.5.0"]) {
+    const audit = mutatedAudit("minipuft/cloudySky", (snapshot) => {
+      snapshot.delivery.templateVersion = templateVersion;
+    });
+    const result = audit.results.find(
+      (entry) => entry.repository === "minipuft/cloudySky",
+    );
+    assert.deepEqual(result.violations, [], templateVersion);
+  }
+  const consumer = auditFleet(fleet, healthySnapshots()).results.find(
+    (entry) => entry.repository === "minipuft/gemini-prompts",
+  );
+  assert.deepEqual(consumer.violations, []);
+  assert.deepEqual(consumer.notes, []);
+});
+
+test("a caller pinned by the release tag name is current", () => {
+  const byTag = {
+    ...fleet,
+    repositories: fleet.repositories.map((entry) =>
+      entry.repository === "minipuft/gemini-prompts"
+        ? { ...entry, standardsRef: "v1.4.0" }
+        : entry,
+    ),
+  };
+  const snapshots = healthySnapshots();
+  snapshots.repositories["minipuft/gemini-prompts"].caller =
+    "uses: minipuft/repository-standards/.github/workflows/consumer-contract.yml@v1.4.0\n" +
+    "with:\n  standards-ref: v1.4.0\n";
+  assert.equal(auditFleet(byTag, snapshots).violationCount, 0);
+});
+
+test("an unreadable delivery contract is an unverified note, not lag", () => {
+  const audit = mutatedAudit("minipuft/cloudySky", (snapshot) => {
+    snapshot.delivery = {
+      present: false,
+      templateVersion: null,
+      unexplained: "403 Forbidden",
+    };
+  });
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /Note: delivery contract presence could not be verified: 403 Forbidden/,
+  );
+  assert.doesNotMatch(
+    formatFleetReport(audit),
+    /latest repository-standards release is/,
+  );
+});
+
+test("a delivery contract with no templateVersion is an unverified note, not lag", () => {
+  const audit = mutatedAudit("minipuft/cloudySky", (snapshot) => {
+    snapshot.delivery = { present: true, templateVersion: null };
+  });
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /Note: delivery contract carries no templateVersion; lag against 1\.4\.0 is unverified/,
+  );
+});
+
+test("an unresolved latest release is one fleet-level note, and no member fails on it", () => {
+  const snapshots = healthySnapshots();
+  snapshots.standardsRelease = {
+    unexplained: ".release-please-manifest.json: ENOENT",
+  };
+  for (const snapshot of Object.values(snapshots.repositories))
+    if (snapshot.delivery.present) snapshot.delivery.templateVersion = "0.1.0";
+  const audit = auditFleet(fleet, snapshots);
+  const report = formatFleetReport(audit);
+  assert.equal(audit.violationCount, 0, report);
+  assert.match(report, /Latest repository-standards release: unavailable/);
+  assert.match(
+    report,
+    /Note: latest repository-standards release was not determined \(\.release-please-manifest\.json: ENOENT\); delivery-contract and consumer-pin lag are unverified/,
+  );
+});
+
+test("an unresolvable release tag leaves pin lag unverified while template lag still grades", () => {
+  const snapshots = healthySnapshots();
+  snapshots.standardsRelease = { version: "1.4.0" };
+  snapshots.repositories["minipuft/gemini-prompts"].caller =
+    `uses: minipuft/repository-standards/.github/workflows/consumer-contract.yml@${OLD_PIN}\n`;
+  snapshots.repositories["minipuft/cloudySky"].delivery.templateVersion =
+    "1.3.0";
+  const audit = auditFleet(fleet, snapshots);
+  const report = formatFleetReport(audit);
+  assert.match(
+    report,
+    /Note: release tag v1\.4\.0 is not resolvable in this checkout; consumer-pin lag is unverified/,
+  );
+  assert.doesNotMatch(report, /consumer-contract caller pins/);
+  assert.match(report, /delivery contract template is 1\.3\.0/);
 });
