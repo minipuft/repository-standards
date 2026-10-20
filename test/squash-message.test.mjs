@@ -12,7 +12,10 @@ import {
   vendoredParserSource,
   VENDORED_PARSER_PATH,
 } from "../scripts/vendor-conventional-commits-parser.mjs";
-import { MIRRORED_CI_STEPS } from "../templates/delivery-contract/scripts/pr-check.mjs";
+import {
+  ADVISORY_CI_STEPS,
+  MIRRORED_CI_STEPS,
+} from "../templates/delivery-contract/scripts/pr-check.mjs";
 import {
   checkSquashMessage,
   loadParser,
@@ -451,4 +454,29 @@ test("pr-check mirrors exactly the guarded run steps of the template workflow", 
     MIRRORED_CI_STEPS.map((step) => step.ciStepName).sort(),
     guarded,
   );
+});
+
+// The other half of the parity relation: a `run:` step pr-check does not mirror must be declared
+// advisory there, and must be unable to fail the job. Without this, an unguarded step could gate
+// CI while the local check skips it, which is the gap the mirror exists to close.
+test("every unmirrored run step is declared advisory and cannot fail PR Conventions", () => {
+  const workflow = parseYaml(
+    fs.readFileSync(
+      path.join(TEMPLATE, ".github", "workflows", "pr-conventions.yml"),
+      "utf8",
+    ),
+  );
+  const mirrored = new Set(MIRRORED_CI_STEPS.map((step) => step.ciStepName));
+  const unmirrored = Object.values(workflow.jobs)
+    .flatMap((job) => job.steps)
+    .filter((step) => typeof step.run === "string" && !mirrored.has(step.name));
+  // Positive control: the contract-lag warning is such a step, so the list is not vacuously empty.
+  assert.equal(unmirrored.length, 1);
+  assert.deepEqual(
+    unmirrored.map((step) => step.name).sort(),
+    [...ADVISORY_CI_STEPS].sort(),
+  );
+  for (const step of unmirrored) {
+    assert.equal(step["continue-on-error"], true, step.name);
+  }
 });
