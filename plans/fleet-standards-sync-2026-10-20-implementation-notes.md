@@ -22,6 +22,11 @@
 
 ## Deviations
 
+- **DEV-1-1** Row 1 put grading in `lib/fleet-drift-auditor.mjs` (the script only collects) and imports the version comparison from the managed `warn-contract-lag.mjs` so one definition serves both. Accepted.
+
 ## Findings
+
+- **Row 1** `audit-fleet.mjs` still aborts on a failed consumer read (`raw()` and the protection read throw), so a missing token aborts the audit instead of producing notes; outside this plan's scope.
+- **Row 12** gemini-prompts had no tests; the row added `hooks/tests` and a CI step to run them (gemini-prompts #50).
 
 - **Row 2** The one writer of downstream `claude-prompts` versions is claude-prompts-mcp `extension-publish.yml` `sync-downstream`; Renovate's shared preset excludes `claude-prompts`. It failed red on 2026-10-06 for 5.1.0 and 5.1.1 and nothing surfaced it until the weekly audit on 10-12. `docs/guides/release-process.md` and the `npm-publish.yml` comment name Renovate and Dependabot as owners; neither is. The marketplace listing may decide where Claude Code installs the plugin, so marketplace users may still run 4.0.1 (unverified).
