@@ -159,6 +159,12 @@ an uncommitted managed file is exactly what `update` later refuses to overwrite.
 | `scripts/warn-contract-lag.mjs`                  |                                         |
 | `scripts/vendor/conventional-commits-parser.cjs` |                                         |
 | `scripts/adr.mjs`                                |                                         |
+| `scripts/validate-github-action-pins.mjs`        |                                         |
+| `scripts/validate-required-contexts.mjs`         |                                         |
+| `scripts/validate-lockfile-sync.mjs`             |                                         |
+| `scripts/validate-git-hooks-active.mjs`          |                                         |
+| `scripts/create-worktree.mjs`                    |                                         |
+| `scripts/merge-unreleased-changelog.mjs`         |                                         |
 
 The `PR Conventions` workflow checks the PR body against the template, lints the title with the
 repo's commitlint config, and checks that release-please can parse the commit the squash merge
@@ -217,6 +223,25 @@ node scripts/adr.mjs supersede NNNN "title"
 node scripts/adr.mjs index
 node scripts/adr.mjs check
 ```
+
+Six more managed scripts answer questions every member has. None needs a dependency; each takes
+`--root <dir>` (default: the repository the script sits in), has a `--self-test`, and is wired by
+the member's own `package.json` or workflow, which the contract does not write:
+
+| Script                            | Fails when                                                                                                                                                              | Exits 0 and says why when                                                        |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `validate-github-action-pins.mjs` | an external `uses:` under `.github/`, or `actions/`, is not a 40-hex SHA with a same-line `# vX.Y.Z` comment, or a `docker://` ref has no `@sha256:` digest             | —                                                                                |
+| `validate-required-contexts.mjs`  | a context in `.github/required-contexts.json` matches no job `name:` (or id) in `.github/workflows/`, or names an interpolated `${{ }}` job                             | the JSON file is absent (creating it opts in)                                    |
+| `validate-lockfile-sync.mjs`      | a tracked `package-lock.json` disagrees with npm's `node_modules/.package-lock.json` beside it (version mismatch, missing, unexpected), or that tree is not installed   | the contract answers a package manager other than npm, or no lockfile is tracked |
+| `validate-git-hooks-active.mjs`   | a linked worktree would skip a tracked `.husky/*` hook because `.husky/_` was never generated there (git runs nothing and exits 0 for an unresolvable `core.hooksPath`) | the checkout is not a linked worktree, or no hook is tracked                     |
+| `create-worktree.mjs`             | `git worktree add` + husky in the new tree + a `node_modules` symlink per installed package directory cannot prove every tracked hook is live afterwards                | —                                                                                |
+| `merge-unreleased-changelog.mjs`  | the changelog it is pointed at does not exist                                                                                                                           | `[Unreleased]` is empty (it still keeps that header above the newest version)    |
+
+The hook pair exists because `core.hooksPath` is the relative `.husky/_`, a directory husky
+generates and self-ignores, so a plain `git worktree add` yields a worktree where every hook is
+silently skipped. `create-worktree.mjs` is the bootstrap that makes them fire;
+`validate-git-hooks-active.mjs` is the check that notices when someone used `git worktree add`
+instead. This repository runs the pin check on its own tree (`npm run validate:workflows`).
 
 `delivery-contract settings [--apply] [--repo PATH]` prints (or, with `--apply`, runs via `gh`)
 the squash-merge and delete-branch-on-merge settings the contract depends on, reading owner/repo
