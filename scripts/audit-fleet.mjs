@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -161,6 +161,24 @@ async function deliveryContractSnapshot(repository, ref) {
   }
 }
 
+// Whether any of `paths` differs between two refs of `checkout`: true, false, or null when git
+// could not compare them (a ref missing from the checkout). `git diff --quiet` exits 1 on a
+// difference and 128 on an unknown ref, so the exit status alone carries all three answers.
+// `from` is whatever a member wrote as its pin; `--end-of-options` keeps a pin spelled like an
+// option (`--output=…`) a ref, which git then refuses as unknown.
+function surfaceChangedIn(checkout) {
+  return (from, to, paths) => {
+    const result = spawnSync(
+      "git",
+      ["diff", "--quiet", "--end-of-options", from, to, "--", ...paths],
+      { cwd: checkout, stdio: "ignore" },
+    );
+    if (result.status === 0) return false;
+    if (result.status === 1) return true;
+    return null;
+  };
+}
+
 // The latest repository-standards release, read from THIS checkout rather than the releases API.
 //
 // The version is `.release-please-manifest.json`'s `"."` entry: Release Please's own record of the
@@ -175,11 +193,15 @@ async function deliveryContractSnapshot(repository, ref) {
 // the report says how far behind it is. A tag not yet created (the seconds between a release PR's
 // merge and its tag) or a checkout without tags leaves `commit` unset, and the auditor reports pin
 // lag as unverified rather than failing.
-function latestStandardsRelease() {
+//
+// `tags` and `surfaceChanged` answer owner ruling Q1: a member is behind only when the files it uses
+// differ between its pin and the latest tag, so the auditor needs every release tag in order and a
+// way to compare two of them. Both come from the same local tags.
+export function latestStandardsRelease(checkout = root) {
   let version;
   try {
     version = JSON.parse(
-      readFileSync(resolve(root, ".release-please-manifest.json"), "utf8"),
+      readFileSync(resolve(checkout, ".release-please-manifest.json"), "utf8"),
     )["."];
   } catch (error) {
     return { unexplained: `.release-please-manifest.json: ${error.message}` };
@@ -196,25 +218,75 @@ function latestStandardsRelease() {
         "--format=%(refname:short) %(objectname) %(*objectname)",
         "refs/tags",
       ],
-      { cwd: root, encoding: "utf8" },
+      { cwd: checkout, encoding: "utf8" },
     );
   } catch (error) {
     return { version, unexplained: `git tags unreadable: ${error.message}` };
   }
   const tagsByCommit = {};
+  const tags = [];
   let commit;
   for (const line of listing.split("\n").filter(Boolean)) {
     // An annotated tag's own object is not a commit; `*objectname` is the commit it peels to.
     const [tag, object, peeled] = line.split(" ");
     tagsByCommit[peeled || object] ??= tag;
+    if (/^v\d+\.\d+\.\d+$/.test(tag)) tags.push({ tag, version: tag.slice(1) });
     if (tag === `v${version}`) commit = peeled || object;
   }
-  return { version, commit, tagsByCommit };
+  return {
+    version,
+    commit,
+    tagsByCommit,
+    tags,
+    surfaceChanged: surfaceChangedIn(checkout),
+  };
+}
+
+// The member's Renovate config, at its default branch, from `renovate.json` or
+// `.github/renovate.json`. Absent from both is a normal answer (`{}`): a member that does not use
+// Renovate contributes nothing to preset lag. A read that never reached the file is `unexplained`,
+// graded as an unverified note, for the same reason as deliveryContractSnapshot.
+async function renovateSnapshot(repository, ref) {
+  if (!ref) {
+    return {
+      renovateUnexplained:
+        "default branch unresolved (repository identity did not resolve)",
+    };
+  }
+  for (const path of ["renovate.json", ".github/renovate.json"]) {
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${repository}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+        { headers: authHeaders() },
+      );
+      if (response.status === 404) continue;
+      if (!response.ok) {
+        return {
+          renovateUnexplained: `${path}: ${response.status} ${response.statusText}`,
+        };
+      }
+      const payload = await response.json();
+      return {
+        renovate: JSON.parse(
+          Buffer.from(payload.content, payload.encoding ?? "base64").toString(
+            "utf8",
+          ),
+        ),
+      };
+    } catch (error) {
+      return { renovateUnexplained: `${path}: ${error.message}` };
+    }
+  }
+  return {};
 }
 
 async function repositorySnapshot(entry, mergeMode) {
   const identity = await repositoryIdentity(entry.repository);
   const delivery = await deliveryContractSnapshot(
+    entry.repository,
+    identity?.defaultBranch,
+  );
+  const renovate = await renovateSnapshot(
     entry.repository,
     identity?.defaultBranch,
   );
@@ -224,7 +296,7 @@ async function repositorySnapshot(entry, mergeMode) {
   // Fetching those files for it would throw on the first missing one (`raw()` is unconditional)
   // for a repo that was never supposed to have them.
   if (entry.consumerContract === false) {
-    return { identity, delivery, mergeMode };
+    return { identity, delivery, mergeMode, ...renovate };
   }
   const contract = JSON.parse(
     await raw(entry.repository, "downstream-contract.json"),
@@ -246,6 +318,7 @@ async function repositorySnapshot(entry, mergeMode) {
     identity,
     delivery,
     mergeMode,
+    ...renovate,
     dependabotPresent:
       (await request(
         `https://raw.githubusercontent.com/${entry.repository}/main/.github/dependabot.yml`,
@@ -265,11 +338,6 @@ async function repositorySnapshot(entry, mergeMode) {
   if (versionSource) {
     snapshot[versionSource.field] = versionSource.extract(
       await raw(entry.repository, versionSource.path),
-    );
-  }
-  if (entry.renovatePresetVersion) {
-    snapshot.renovate = JSON.parse(
-      await raw(entry.repository, "renovate.json"),
     );
   }
   return snapshot;
@@ -311,7 +379,12 @@ async function main() {
   if (audit.violationCount) process.exitCode = 1;
 }
 
-main().catch((error) => {
-  console.error(`FLEET AUDIT: ${error.message}`);
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  import.meta.url === new URL(`file://${process.argv[1]}`).href
+) {
+  main().catch((error) => {
+    console.error(`FLEET AUDIT: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

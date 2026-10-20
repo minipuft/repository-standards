@@ -338,13 +338,29 @@ them all. The latest release is read from this checkout — the version from
 can turn a flaky network into a false failure. The workflow checks out full history for the tags,
 and also runs when a release is published.
 
-| Observed                                                                                      | Classification                                                       |
-| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `.delivery-contract.json` `templateVersion` older than the latest release                     | **Drift** — named with both versions and how far behind              |
-| Consumer caller's `consumer-contract.yml@` pin or `standards-ref` not the latest tag's commit | **Drift** — named with the pin, the release it points at, and latest |
-| Caller pin differs from `fleet.json` `standardsRef`                                           | **Drift** — the existing pin checks                                  |
-| A member on, or ahead of, the latest release                                                  | No drift                                                             |
-| Contract unreadable, no `templateVersion`, release or tag not resolvable in the checkout      | Note — the lag is reported unverified, never failed                  |
+**A release that does not change what a member uses is not lag.** Older is not enough: a member is
+behind only when the files it consumes differ between what it pins and the latest release tag
+(`git diff` between the two local tags). A release that changes only the audit, CI, docs or the
+CLI flags nobody. Each kind of pin is compared over its own files:
+
+| Pin                                                                                     | Files compared                                                                                                                                                               |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.delivery-contract.json` `templateVersion`                                             | `templates/delivery-contract/**`                                                                                                                                             |
+| Consumer caller's `consumer-contract.yml@` pin and `standards-ref`                      | `.github/workflows/consumer-contract.yml`, `actions/verify-consumer/**`, `lib/consumer-contract-validator.mjs`, `profiles.json`, `contracts/downstream-contract.schema.json` |
+| `renovate.json` or `.github/renovate.json` `extends` of `…//renovate/downstream.json#v` | `renovate/downstream.json`                                                                                                                                                   |
+
+The consumer files are what the reusable workflow executes. `package.json` and
+`package-lock.json`, which its verifier also installs from, are left out: Release Please bumps
+`package.json` in every release, so counting them would flag every member on every release again.
+
+| Observed                                                                                                                   | Classification                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| A pin older than the latest release, and its files changed since                                                           | **Drift** — named with the pin, the latest release, the release that last changed the files, and the remedy |
+| A pin older than the latest release, and its files unchanged since                                                         | No drift                                                                                                    |
+| Caller pin differs from `fleet.json` `standardsRef`                                                                        | **Drift** — the existing pin checks                                                                         |
+| Renovate preset pin differs from `fleet.json` `renovatePresetVersion`                                                      | **Drift** — declaration and member must agree                                                               |
+| A member on, or ahead of, the latest release, or with no Renovate config extending the preset                              | No drift                                                                                                    |
+| Contract or Renovate config unreadable, no `templateVersion`, a pinned version or the latest tag missing from the checkout | Note — the lag is reported unverified, never failed                                                         |
 
 ## Versioning and rollback
 
