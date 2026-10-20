@@ -43,7 +43,7 @@
   "scripts": {
     "test": "node --test \"test/**/*.test.mjs\"",
     "audit:fleet": "node scripts/audit-fleet.mjs",
-    "validate:workflows": "node scripts/validate-workflows.mjs",
+    "validate:workflows": "node templates/delivery-contract/scripts/validate-github-action-pins.mjs --root .",
     "validate:renovate": "renovate-config-validator --strict renovate/default.json renovate/downstream.json",
     "format:check": "prettier --check .",
     "validate": "npm test && npm run validate:workflows && npm run validate:renovate && npm run format:check"

@@ -1,0 +1,4 @@
+{
+  "branch": "main",
+  "contexts": ["lint", "Build"]
+}

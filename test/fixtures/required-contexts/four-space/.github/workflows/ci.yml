@@ -1,0 +1,17 @@
+name: Four space
+
+on: pull_request
+
+# The job shapes below are the input under test; prettier would rewrite them.
+# prettier-ignore
+jobs:
+    build:
+        name: Build
+        runs-on: ubuntu-latest
+        steps:
+            - name: Not A Job
+              run: echo build
+    lint:
+        runs-on: ubuntu-latest
+        steps:
+            - run: echo lint

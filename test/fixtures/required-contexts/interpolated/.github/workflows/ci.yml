@@ -1,0 +1,13 @@
+name: Matrix
+
+on: pull_request
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - run: echo test

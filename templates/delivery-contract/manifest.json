@@ -59,6 +59,36 @@
       "mode": "0755"
     },
     {
+      "path": "scripts/validate-github-action-pins.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "scripts/validate-required-contexts.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "scripts/validate-lockfile-sync.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "scripts/validate-git-hooks-active.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "scripts/create-worktree.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
+      "path": "scripts/merge-unreleased-changelog.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
       "path": "docs/adr/0000-template.md",
       "class": "seeded"
     }

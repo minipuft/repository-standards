@@ -1,0 +1,6 @@
+name: t
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: owner/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v4.2.0

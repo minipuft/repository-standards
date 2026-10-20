@@ -1,0 +1,643 @@
+name: CI
+
+# Required CI deliberately has no workflow-level path filter: every protected context
+# must report on every PR. The classifier below routes work *inside* this workflow, so
+# documentation and hook-only changes avoid installs/builds/tests while mixed, unknown,
+# configuration, dependency, and executable changes fail closed to the full suite.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+
+jobs:
+  classify:
+    name: Classify validation scope
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.changes.outputs.scope }}
+      full: ${{ steps.changes.outputs.full }}
+      python: ${{ steps.changes.outputs.python }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+
+      - name: Classify changed paths
+        id: changes
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          changed_files="$RUNNER_TEMP/changed-files.txt"
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ -n "$PR_BASE_SHA" ]; then
+            git diff --name-only --diff-filter=ACMRD "$PR_BASE_SHA...$GITHUB_SHA" > "$changed_files"
+            git diff --check "$PR_BASE_SHA...$GITHUB_SHA"
+          elif [ -n "$PUSH_BASE_SHA" ] && ! printf '%s' "$PUSH_BASE_SHA" | grep -Eq '^0+$' && git cat-file -e "$PUSH_BASE_SHA^{commit}"; then
+            git diff --name-only --diff-filter=ACMRD "$PUSH_BASE_SHA..$GITHUB_SHA" > "$changed_files"
+            git diff --check "$PUSH_BASE_SHA..$GITHUB_SHA"
+          else
+            git ls-tree -r --name-only "$GITHUB_SHA" > "$changed_files"
+            git show --check --format= "$GITHUB_SHA"
+          fi
+
+          node scripts/classify-validation-scope.js --github-output "$GITHUB_OUTPUT" < "$changed_files"
+          echo "Changed paths:"
+          cat "$changed_files"
+
+      - name: Summarize routing decision
+        run: |
+          echo "### Validation scope: \`${{ steps.changes.outputs.scope }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Full Node validation: \`${{ steps.changes.outputs.full }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Python validation: \`${{ steps.changes.outputs.python }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================
+  # Stage 1: Fast validation (single Node LTS)
+  # Deterministic checks that don't depend on Node version
+  # ============================================================
+  lint:
+    name: Lint & Validate
+    needs: classify
+    if: always()
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Assert change classification passed
+        working-directory: .
+        run: |
+          echo "classifier result: ${{ needs.classify.result }}"
+          [ "${{ needs.classify.result }}" = "success" ] || exit 1
+
+      - name: Checkout
+        if: needs.classify.result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        if: needs.classify.result == 'success' && needs.classify.outputs.scope != 'docs'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            package-lock.json
+
+      - name: Install dependencies
+        if: needs.classify.outputs.scope == 'full'
+        run: npm ci --prefer-offline --no-audit
+
+      # `typecheck:cli` (a member of validate:all) runs `npm -w cli run typecheck` from the repo
+      # root, so it resolves `tsc` and `@types/node` from the root workspace install, which the
+      # server install above does not provide. Same step the CLI job runs for the same typecheck;
+      # without it the member found no `@types/node` here (TS2688) and exited 2.
+      - name: Install dependencies (root workspaces, for typecheck:cli)
+        if: needs.classify.outputs.scope == 'full'
+        working-directory: .
+        run: npm ci --prefer-offline --no-audit
+
+      # Pins live in requirements-dev.txt, which is the single installable source both this
+      # workflow and `npm run setup:python` read — that file carries the full rationale for
+      # pinning at all. They used to be four literal `pip install x==y` lines here, which no
+      # developer could install from, so local tooling drifted from CI unnoticed (measured
+      # 2026-08-19: local ruff 0.15.5 against 0.16.1, pytest 9.0.2 against 9.1.1).
+      # ruff is installed here rather than via astral-sh/ruff-action because
+      # `validate:python` (inside validate:all) is the single definition of the Python
+      # gate — the action would have been a second, silently divergent one.
+      - name: Install Python tooling
+        if: needs.classify.result == 'success' && needs.classify.outputs.scope != 'docs'
+        working-directory: .
+        run: pip install -r requirements-dev.txt --quiet
+
+      # The seven `validate:no-*` recurrence guards shell out to ripgrep, which the
+      # GitHub runner image does not ship. This was latent until validate:all started
+      # running in CI below — the guards exited 127 (`rg: not found`), not 0.
+      - name: Install ripgrep
+        if: needs.classify.outputs.scope == 'full'
+        run: sudo apt-get install -y --no-install-recommends ripgrep
+
+      - name: Typecheck
+        if: needs.classify.outputs.scope == 'full'
+        run: npm run typecheck
+
+      # The whole suite, not a hand-picked subset. Before this, 16 of validate:all's 21
+      # members ran in no automated gate — including all eight `validate:no-*` recurrence
+      # guards, whose entire purpose is to make a retirement permanent. A PR reintroducing
+      # `ChainSessionManager` or `StepState` merged green.
+      # Members already covered elsewhere were removed from this job rather than run twice:
+      # lint:ratchet, validate:contracts, verify:action-metadata, validate:versions, validate:arch.
+      # Includes the Python gate: `validate:python` runs Ruff, Pyrefly, and the hook
+      # Pytest suite. There is no separate pyrefly/test step here on purpose — one
+      # command is the local and hosted contract.
+      - name: Validate (full suite)
+        if: needs.classify.outputs.scope == 'full'
+        run: npm run validate:all
+
+      - name: Validate Python hooks
+        if: needs.classify.outputs.scope == 'hooks'
+        working-directory: .
+        run: npm --prefix server run validate:python
+
+      # CONTRIBUTING.md classifies as documentation (scripts/classify-validation-scope.js), and
+      # both lightweight routes skip `validate:all` entirely. Registering this check only in the
+      # suite would leave it dead on the one kind of pull request it exists to police. It runs on
+      # every lightweight route, not `docs` alone: a CONTRIBUTING edit riding with a `hooks/**`
+      # change classifies as `hooks`. It runs with no node_modules here, which is why the script
+      # imports nothing but node: builtins.
+      - name: Validate CONTRIBUTING commands (lightweight routes)
+        if: needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: node server/scripts/validate-contributing.js
+
+      # Same reasoning as the CONTRIBUTING check above: a plan-only change classifies as `docs`,
+      # a plan edit riding with a `hooks/**` change classifies as `hooks`, both skip
+      # `validate:all`, and registering plan-row tracking only in the suite left it dead on plan
+      # pushes. It imports only node: builtins, so it needs no node_modules on either route.
+      - name: Validate plan row tracking (lightweight routes)
+        if: needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: node server/scripts/validate-plan-row-tracking.js
+
+      # README.md classifies as `docs` too, and the README gate carries two checks that exist for
+      # README pull requests: the shipped prompt count, and whether every command names a prompt the
+      # package ships. Registered only in the suite, both were dead on the one kind of pull request
+      # that introduces the defect. It runs on every lightweight route, not `docs` alone: a README
+      # edit riding with a `hooks/**` change classifies as `hooks`, which a docs-only step never
+      # sees. It imports only node: builtins, so it needs no node_modules here.
+      - name: Validate README charter (lightweight routes)
+        if: needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: node server/scripts/validate-readme.js --mode=block
+
+      # The pipeline stage table in docs/architecture/overview.md is documentation too: a hand edit
+      # to it classifies as `docs` and skips `validate:all`, which is exactly the edit that lets the
+      # table drift from the `stages` array in pipeline-builder.ts. Registered only in the suite, it
+      # would be dead on that pull request. It imports only node: builtins, so it needs no
+      # node_modules on either lightweight route.
+      - name: Validate pipeline stage table (lightweight routes)
+        if: needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: node server/scripts/validate-pipeline-stage-table.js
+
+      # The SQLite table map in docs/architecture/sqlite-persistence.md and the Runtime State table
+      # in CLAUDE.md are documentation as well: an edit to either classifies as `docs` and skips
+      # `validate:all`, so on exactly the pull request that could make them drift from
+      # table-contracts.ts, a suite-only registration would never run. It imports only node:
+      # builtins, so it needs no node_modules on either lightweight route.
+      - name: Validate SQLite table map (lightweight routes)
+        if: needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: node server/scripts/validate-table-map-docs.js
+
+      # CLAUDE.md, AGENTS.md, and .claude/rules/*.md are documentation paths, so their pull
+      # requests intentionally skip validate:all. The full route checks this inside that suite;
+      # lightweight routes run the same byte comparison here so a stale projection cannot merge.
+      - name: Validate project guidance projection (lightweight routes)
+        if: needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: node scripts/sync-project-guidance.js --check
+
+      - name: Confirm lightweight validation
+        if: needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: echo "${{ needs.classify.outputs.scope }} scope passed its selected validation"
+
+  # The cpm CLI ships as the `cpm` bin of the claude-prompts npm package and
+  # bundles server/src/cli-shared, so a server-side change can break it without
+  # touching cli/. Every full-scope change validates it; safe scopes retain the
+  # required job name and record why its heavy steps were omitted.
+  cli:
+    name: CLI
+    needs: classify
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert change classification passed
+        run: |
+          echo "classifier result: ${{ needs.classify.result }}"
+          [ "${{ needs.classify.result }}" = "success" ] || exit 1
+
+      - name: Record intentional lightweight pass
+        if: needs.classify.result == 'success' && needs.classify.outputs.scope != 'full'
+        run: echo "CLI is unaffected by the ${{ needs.classify.outputs.scope }} scope"
+
+      - name: Checkout
+        if: needs.classify.outputs.scope == 'full'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        if: needs.classify.outputs.scope == 'full'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (root workspaces)
+        if: needs.classify.outputs.scope == 'full'
+        run: npm ci --prefer-offline --no-audit
+
+      # cli/tsconfig.json maps @cli-shared/* into server/src, so typechecking the CLI
+      # pulls in server sources that import zod. Those resolve from server/node_modules,
+      # which the root workspace install does not provide.
+      - name: Install server dependencies (CLI typechecks against server sources)
+        if: needs.classify.outputs.scope == 'full'
+        run: npm ci --prefix server --prefer-offline --no-audit
+
+      - name: Typecheck
+        if: needs.classify.outputs.scope == 'full'
+        run: npm -w cli run typecheck
+
+      # Build before test: the integration suite execs cli/dist/cpm.js
+      - name: Build
+        if: needs.classify.outputs.scope == 'full'
+        run: npm -w cli run build
+
+      - name: Test
+        if: needs.classify.outputs.scope == 'full'
+        run: npm -w cli run test:ci
+
+  # ============================================================
+  # Stage 2: Build (single Node LTS, upload artifact)
+  # Build once, share with the test jobs. Runs BESIDE lint, not after it: the test
+  # jobs only need `dist/`, so serializing build behind a 3-minute lint put lint on
+  # the critical path for nothing. A lint failure still fails the PR through the
+  # required `Lint & Validate` context; it no longer also holds the tests back.
+  # ============================================================
+  build:
+    name: Build
+    needs: classify
+    if: always()
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Assert prerequisite checks passed
+        working-directory: .
+        run: |
+          echo "classifier result: ${{ needs.classify.result }}"
+          [ "${{ needs.classify.result }}" = "success" ]
+
+      - name: Record intentional lightweight pass
+        if: needs.classify.result == 'success' && needs.classify.outputs.scope != 'full'
+        working-directory: .
+        run: echo "Build is unaffected by the ${{ needs.classify.outputs.scope }} scope"
+
+      - name: Checkout
+        if: needs.classify.outputs.scope == 'full'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        if: needs.classify.outputs.scope == 'full'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".node-version"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        if: needs.classify.outputs.scope == 'full'
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build bundled distribution
+        if: needs.classify.outputs.scope == 'full'
+        run: npm run build:prod
+
+      - name: Startup smoke test
+        if: needs.classify.outputs.scope == 'full'
+        run: npm run start:test
+
+      - name: Verify packed npm consumer
+        if: needs.classify.outputs.scope == 'full'
+        run: npm run verify:package-artifact
+
+      # Guards the published MCP tool surface, which CLAUDE.md places inside the Public
+      # API Contract. The SDK selects its JSON Schema converter from the installed zod
+      # major, so a dependency bump alone can rewrite every tool's inputSchema with no
+      # typecheck or test failure — that is how the zod 3 -> 4 move produced 39 schema
+      # changes. Lives here rather than in validate:all because it spawns the built
+      # server, and validate:all runs before the build.
+      - name: MCP tool schema snapshot
+        if: needs.classify.outputs.scope == 'full'
+        run: npm run validate:tool-schemas
+
+      # The snapshot above proves the tool schemas did not change shape; this proves the
+      # tools still answer. Different failures: a schema can stay byte-identical while the
+      # server fails to start, and a working server can advertise a rewritten schema.
+      #
+      # Wired 2026-08-04. Before that, verify:mcp was registered, documented in CLAUDE.md as
+      # the way to check a build, and invoked by no workflow — while verify:mcp:self-test ran
+      # inside validate:all on every run. CI proved the verifier worked and never verified the
+      # surface. A self-test proves the check runs; it does not run the check.
+      #
+      # Here rather than in validate:all for the same reason as the step above: it spawns the
+      # built server, and validate:all runs before the build. The verifier refuses a stale
+      # dist/ rather than reporting green against one.
+      - name: Verify MCP surface
+        if: needs.classify.outputs.scope == 'full'
+        run: npm run verify:mcp
+
+      - name: Upload build artifact
+        if: needs.classify.outputs.scope == 'full'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: server/dist/
+          retention-days: 1
+
+  # ============================================================
+  # Stage 3: Test jobs (LTS versions only), run in parallel
+  # Download artifact, run tests on multiple Node versions.
+  #
+  # `test` (unit + integration) and `e2e` are separate jobs so the ~5.5 minute e2e run
+  # overlaps the unit/integration run instead of following it. They install and download
+  # the same inputs; the duplicated setup (~0.5 min) is what the overlap costs.
+  # ============================================================
+  test:
+    name: Test (Node ${{ matrix.node }})
+    needs: [classify, build]
+    if: ${{ needs.classify.outputs.scope == 'full' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # 24 is what actually ships: every publish path (npm, extension) reads
+      # .node-version, which is 24. Testing only the minimum meant a Node-24-specific
+      # regression passed CI and shipped. 22.13.0 proves the declared node:sqlite floor.
+      #
+      # This matrix is now the ONLY place a second Node version appears. Until 2026-08-19 the
+      # lint and build jobs ran a floating `NODE_LTS: "22.x"` while classify, cli, and every
+      # local dev box ran .node-version's 24 — so `validate:all` was never once executed on the
+      # version that ships, and the resolved 22.x moved under CI without a commit. Both jobs
+      # read .node-version now; the floor is proven here and nowhere else.
+      #
+      # Keep the `e2e` job's matrix in step with this one.
+      matrix:
+        node: ["22.13.0", "24"]
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      # The unit suite runs every `*:self-test` script in BOTH manifests, and the root one
+      # (`pr:check:self-test`) lints a title with the root `commitlint`. Without this install the
+      # positive control refuses instead of passing — measured on PR #317, both Node versions.
+      - name: Install dependencies (root workspaces)
+        working-directory: .
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Download build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: server/dist/
+
+      # The unit suite runs once per leg. On the 22.13.0 leg that single run is the coverage
+      # run (`jest --coverage tests/unit`): jest exits non-zero on a failing test AND on a
+      # missed coverage threshold, so it is the unit gate and the threshold check in one. A
+      # plain `test:ci` run before it executed the same suite twice (measured: 2.8 + 3.2 min).
+      - name: Unit tests
+        if: matrix.node != '22.13.0'
+        run: npm run test:ci
+        timeout-minutes: 15
+
+      - name: Unit tests with coverage threshold
+        if: matrix.node == '22.13.0'
+        run: npm run test:coverage
+        timeout-minutes: 15
+
+      # Integration tests were run by NO automated job before 2026-07-29 — not by
+      # test:ci, not by pre-push, not by npm-publish — and rotted unnoticed to
+      # 10 failing suites / 31 failing tests out of 349. They were made non-blocking
+      # so the rot stayed visible while it was repaired; that debt is now paid and the
+      # `continue-on-error` escape hatch is gone. Blocking is what keeps it paid.
+      - name: Integration tests
+        run: npm run test:integration
+        timeout-minutes: 15
+
+      # `evaluations/` declares `engines.node >=24` (native TypeScript stripping), so its checks
+      # run on the Node 24 leg only. The job already runs on the `full` scope alone, and its
+      # gate tests load the server's own dev dependencies, installed by "Install dependencies"
+      # above -- nothing here installs a second time.
+      - name: Evaluations core controls
+        if: matrix.node == '24'
+        working-directory: .
+        run: npm --prefix evaluations run test:core
+        timeout-minutes: 5
+
+      - name: Evaluations gate controls
+        if: matrix.node == '24'
+        working-directory: .
+        run: npm --prefix evaluations run test:gates
+        timeout-minutes: 5
+
+      - name: Evaluations strict types
+        if: matrix.node == '24'
+        working-directory: .
+        run: npm --prefix evaluations run typecheck
+        timeout-minutes: 5
+
+  e2e:
+    name: E2E (Node ${{ matrix.node }})
+    needs: [classify, build]
+    if: ${{ needs.classify.outputs.scope == 'full' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Same versions as the `test` job, for the same reasons recorded there.
+      matrix:
+        node: ["22.13.0", "24"]
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      # Kept from when e2e ran inside the `test` job, where this install had already happened.
+      # Whether any e2e spec reads the root tree is unmeasured; dropping it is a separate change.
+      - name: Install dependencies (root workspaces)
+        working-directory: .
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Download build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: server/dist/
+
+      - name: E2E tests
+        run: npm run test:e2e
+
+  # ============================================================
+  # Stage 4: Test aggregator
+  #
+  # `Test (Node 22.x)` and `E2E (Node 22.x)` are check-run names derived from a matrix
+  # value, so they change whenever the matrix changes — requiring them would re-create the
+  # "required context nothing reports" bug the moment a Node version is added or dropped.
+  # This job's name is a literal, so it is stable, and `needs.<job>.result` is only
+  # `success` when every matrix leg succeeded. Require this one, never the interpolated
+  # ones. It aggregates BOTH test jobs: a red e2e leg must fail this context.
+  # ============================================================
+  test-suite:
+    name: Test Suite
+    needs: [classify, test, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert selected test scope passed
+        run: |
+          echo "classifier result: ${{ needs.classify.result }}"
+          echo "validation scope: ${{ needs.classify.outputs.scope }}"
+          echo "unit/integration matrix aggregate result: ${{ needs.test.result }}"
+          echo "e2e matrix aggregate result: ${{ needs.e2e.result }}"
+          [ "${{ needs.classify.result }}" = "success" ] || exit 1
+          if [ "${{ needs.classify.outputs.scope }}" = "full" ]; then
+            [ "${{ needs.test.result }}" = "success" ] || exit 1
+            [ "${{ needs.e2e.result }}" = "success" ] || exit 1
+          fi
+
+  # ============================================================
+  # PR Summary: Comment with validation results
+  # ============================================================
+  pr-summary:
+    name: PR Summary
+    needs: [classify, lint, cli, build, test-suite]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Analyze changed files
+        id: changes
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD > changed_files.txt 2>/dev/null; then
+            echo "files=$(cat changed_files.txt | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          else
+            git diff --name-only HEAD~1 HEAD > changed_files.txt 2>/dev/null || echo "No changes" > changed_files.txt
+            echo "files=$(cat changed_files.txt | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment PR with results
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          CLI_RESULT: ${{ needs.cli.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          TEST_RESULT: ${{ needs.test-suite.result }}
+          VALIDATION_SCOPE: ${{ needs.classify.outputs.scope }}
+        with:
+          script: |
+            const fs = require('fs');
+            let changedFiles = 'Unable to determine';
+            try {
+              changedFiles = fs.readFileSync('changed_files.txt', 'utf8').trim() || 'No changes detected';
+            } catch (e) {
+              console.log(`Could not read changed_files.txt: ${e.message}`);
+            }
+
+            const lintResult = process.env.LINT_RESULT || 'unknown';
+            const cliResult = process.env.CLI_RESULT || 'unknown';
+            const buildResult = process.env.BUILD_RESULT || 'unknown';
+            const testResult = process.env.TEST_RESULT || 'unknown';
+            const validationScope = process.env.VALIDATION_SCOPE || 'unknown';
+            const runUrl = `${context.payload.repository.html_url}/actions/runs/${context.runId}`;
+
+            const statusEmoji = (result) => result === 'success' ? '✅' : result === 'skipped' ? '⏭️' : '❌';
+            const allPassed = [lintResult, cliResult, buildResult, testResult].every((r) => r === 'success');
+
+            const message = [
+              allPassed ? '## ✅ CI Passed' : '## ❌ CI Failed',
+              '',
+              `Validation scope: **${validationScope}**`,
+              '',
+              '| Stage | Status |',
+              '|-------|--------|',
+              `| Lint & Validate | ${statusEmoji(lintResult)} ${lintResult} |`,
+              `| CLI | ${statusEmoji(cliResult)} ${cliResult} |`,
+              `| Build | ${statusEmoji(buildResult)} ${buildResult} |`,
+              `| Test Suite | ${statusEmoji(testResult)} ${testResult} |`,
+              '',
+              '<details>',
+              '<summary>Files changed</summary>',
+              '',
+              '```',
+              changedFiles,
+              '```',
+              '</details>',
+              '',
+              `[View workflow run](${runUrl})`
+            ].join('\n');
+
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            const botComment = comments.data.find(c => c.user.type === 'Bot' && (c.body.includes('CI Passed') || c.body.includes('CI Failed')));
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: message
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: message
+              });
+            }

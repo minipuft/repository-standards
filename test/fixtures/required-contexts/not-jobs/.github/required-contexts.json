@@ -1,0 +1,4 @@
+{
+  "branch": "main",
+  "contexts": ["publish", "compact", "Checkout"]
+}

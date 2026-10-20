@@ -1,0 +1,110 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (don't create PR/release)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Release Please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # Use PAT to allow releases to trigger downstream workflows (npm-publish).
+          # Falls back to github.token for forks (but won't trigger workflow-to-workflow).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Checkout repo
+        if: steps.release.outputs.pr && steps.release.outputs.release_created != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          fetch-depth: 0
+
+      - name: Merge manual changelog entries
+        if: steps.release.outputs.pr && steps.release.outputs.release_created != 'true'
+        env:
+          PR_JSON: ${{ steps.release.outputs.pr }}
+        run: |
+          PR_BRANCH=$(echo "$PR_JSON" | jq -r '.headBranchName')
+          git checkout "$PR_BRANCH"
+          node scripts/merge-unreleased-changelog.js
+          if git diff --quiet CHANGELOG.md; then
+            echo "No manual entries to merge"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add CHANGELOG.md
+            git commit -m "chore(docs): merge manual changelog entries into release"
+            git push
+          fi
+
+      - name: Checkout release PR branch for retirement
+        if: steps.release.outputs.pr && steps.release.outputs.release_created != 'true'
+        env:
+          PR_JSON: ${{ steps.release.outputs.pr }}
+        run: |
+          # Do not inherit the branch a sibling step happens to leave checked out.
+          git checkout "$(echo "$PR_JSON" | jq -r '.headBranchName')"
+
+      - name: Retire finished plans
+        if: steps.release.outputs.pr && steps.release.outputs.release_created != 'true'
+        uses: minipuft/repository-standards/actions/retire-plans@ff2e508b179264555c0c440121f848542ed36b36 # v1.12.0
+        with:
+          mode: apply
+
+      - name: Commit retired plans
+        if: steps.release.outputs.pr && steps.release.outputs.release_created != 'true'
+        run: |
+          # The action may rewrite any configured Markdown citation and .prettierignore.
+          # This checkout is clean and dedicated to the release PR, so stage the complete
+          # retirement transaction rather than duplicating linkSources in workflow YAML.
+          if git diff --quiet && [ -z "$(git status --porcelain)" ]; then
+            echo "No plans to retire"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore(docs): retire finished plans to plans/archive/ and plans/reference/"
+            git push
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PR_JSON: ${{ steps.release.outputs.pr }}
+        run: |
+          echo "## Release Please Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ "$RELEASE_CREATED" == "true" ]]; then
+            echo "✅ **Release created**: $TAG_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "- Version: $VERSION" >> $GITHUB_STEP_SUMMARY
+            echo "- [View Release](https://github.com/${{ github.repository }}/releases/tag/$TAG_NAME)" >> $GITHUB_STEP_SUMMARY
+          elif [[ -n "$PR_JSON" ]]; then
+            PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
+            echo "📝 **Release PR updated**: #$PR_NUMBER" >> $GITHUB_STEP_SUMMARY
+            echo "- [View PR](https://github.com/${{ github.repository }}/pull/$PR_NUMBER)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ️ No release action needed" >> $GITHUB_STEP_SUMMARY
+          fi

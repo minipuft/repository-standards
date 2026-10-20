@@ -1,0 +1,27 @@
+name: Quoted names
+
+on: pull_request
+
+# The job shapes below are the input under test; prettier would rewrite them.
+# prettier-ignore
+jobs:
+  double:
+    name: "Double Quoted"
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo double
+  single:
+    name: 'Single ''Quoted'''
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo single
+  commented:
+    name: Commented # the context is the text before the comment
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo commented
+  quoted-commented:
+    name: "Quoted # not a comment" # but this is
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo quoted
