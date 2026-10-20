@@ -24,7 +24,11 @@
 
 - **DEV-1-1** Row 1 put grading in `lib/fleet-drift-auditor.mjs` (the script only collects) and imports the version comparison from the managed `warn-contract-lag.mjs` so one definition serves both. Accepted.
 
+- **DEV-4-1** The planner made the opencode Renovate preset pin change (#60) directly: one line, the preset file byte-identical between v1.0.1 and v1.11.0.
+
 ## Findings
+
+- **Adoptions (rows 3–6)** None of the four members carries a standards dependency; the CLI runs from a detached v1.11.0 checkout (`bin/delivery-contract.cjs`, needs `npm ci` there first). The consumer-contract reusable workflow's inputs did not change between v1.0.0 and v1.11.0, so only the two SHAs move. `update` never touches seeded files (the PR template still required the retired `Initiative:` trailer in every member) or `renovate.json` (gemini and opencode pinned the preset at v1.0.1) → rows 14–15. `pr-check` fails plan progress until a commit exists, and it does not catch a malformed table row.
 
 - **Row 1** `audit-fleet.mjs` still aborts on a failed consumer read (`raw()` and the protection read throw), so a missing token aborts the audit instead of producing notes; outside this plan's scope.
 - **Row 12** gemini-prompts had no tests; the row added `hooks/tests` and a CI step to run them (gemini-prompts #50).
