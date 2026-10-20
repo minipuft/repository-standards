@@ -13,6 +13,9 @@
 - **R8 (planner)** No re-dispatch of the 5.1.1 sync: a dispatch from `main` builds dist from unreleased 6.0 commits; a dispatch at `v5.1.1` carries the guard defect. 6.0.0 is the recovery.
 - **R9 (planner)** Row 10 lands in claude-prompts-mcp under the owner's "auto-merge in our prompt servers" ruling.
 
+- **Q1 (OPEN, owner)** Lag is measured against the latest release (R4), so a release that changes only the audit, CI or docs flags every member. Recommended: lag = installed version older than the newest release whose `templates/delivery-contract/**` differs from the installed one. Rows 14–16 wait for this ruling.
+- **R10 (planner)** The local adoption skill (claude-prompts-mcp `.claude/skills/adopt-repository-standards/`, gitignored) carries Phase A (release), B (claude-prompts-mcp) and C (members), built from the six adoption step logs.
+
 ## Measured inputs (2026-10-20)
 
 - Delivery contract: 6 members at 1.7.0; claude-prompts-mcp at 1.10.1.
@@ -27,6 +30,8 @@
 - **DEV-4-1** The planner made the opencode Renovate preset pin change (#60) directly: one line, the preset file byte-identical between v1.0.1 and v1.11.0.
 
 ## Findings
+
+- **Live audit after wave 1 (run 39397405628, real token)** 6 unexplained drifts: claude-prompts lock 4.0.1 ×3 and marketplace listing 4.0.1 (row 11), t3code template 1.7.0 (row 8), claude-prompts-mcp template 1.10.1 (row 17); cloudySky identity unresolved (the audit token cannot read the private repository).
 
 - **Adoptions (rows 3–6)** None of the four members carries a standards dependency; the CLI runs from a detached v1.11.0 checkout (`bin/delivery-contract.cjs`, needs `npm ci` there first). The consumer-contract reusable workflow's inputs did not change between v1.0.0 and v1.11.0, so only the two SHAs move. `update` never touches seeded files (the PR template still required the retired `Initiative:` trailer in every member) or `renovate.json` (gemini and opencode pinned the preset at v1.0.1) → rows 14–15. `pr-check` fails plan progress until a commit exists, and it does not catch a malformed table row.
 
