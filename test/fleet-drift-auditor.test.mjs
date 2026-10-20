@@ -1,19 +1,82 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import Ajv from "ajv";
 import {
   auditFleet,
   formatFleetReport,
+  RELEASE_SURFACES,
   VERSION_SOURCES,
 } from "../lib/fleet-drift-auditor.mjs";
+import { latestStandardsRelease } from "../scripts/audit-fleet.mjs";
 
-// The latest repository-standards release every healthy fixture is measured against.
-const LATEST = {
-  version: "1.4.0",
-  commit: "a".repeat(40),
-  tagsByCommit: { ["a".repeat(40)]: "v1.4.0", ["b".repeat(40)]: "v1.3.0" },
-};
+const TEMPLATE = "templates/delivery-contract/scripts/check.mjs";
+const WORKFLOW = ".github/workflows/consumer-contract.yml";
+const PRESET = "renovate/downstream.json";
+const AUDIT_ONLY = "scripts/audit-fleet.mjs";
+
+/**
+ * A release fixture whose `surfaceChanged` answers from a declared history instead of git, so no
+ * test depends on this repository's real tags. `history` lists each release tag, oldest first, with
+ * the paths that release changed; a commit is resolved through `tagsByCommit`, and a ref the
+ * history does not hold answers null, the way `git diff` refuses an unknown ref.
+ */
+function releaseFixture(version, history, tagsByCommit = {}) {
+  const order = history.map(([tag]) => tag);
+  const indexOf = (ref) => {
+    const commit = Object.keys(tagsByCommit).find((candidate) =>
+      candidate.startsWith(ref),
+    );
+    const index = order.indexOf(commit ? tagsByCommit[commit] : ref);
+    return index === -1 ? null : index;
+  };
+  const commit = Object.keys(tagsByCommit).find(
+    (candidate) => tagsByCommit[candidate] === `v${version}`,
+  );
+  return {
+    version,
+    commit,
+    tagsByCommit,
+    tags: order.map((tag) => ({ tag, version: tag.slice(1) })),
+    surfaceChanged(from, to, paths) {
+      const [low, high] = [indexOf(from), indexOf(to)].sort((a, b) => a - b);
+      if (low === null || high === null) return null;
+      return history
+        .slice(low + 1, high + 1)
+        .some(([, changed]) =>
+          changed.some((path) =>
+            paths.some(
+              (surface) => path === surface || path.startsWith(`${surface}/`),
+            ),
+          ),
+        );
+    },
+  };
+}
+
+// The latest repository-standards release every healthy fixture is measured against. Every
+// release in it changes the template and the consumer workflow, so any older pin is behind.
+const LATEST = releaseFixture(
+  "1.4.0",
+  [
+    ["v0.9.0", [TEMPLATE, WORKFLOW, PRESET]],
+    ["v1.3.0", [TEMPLATE, WORKFLOW, PRESET]],
+    ["v1.3.9", [TEMPLATE, WORKFLOW]],
+    ["v1.4.0", [TEMPLATE, WORKFLOW, PRESET]],
+    ["v1.4.1", [AUDIT_ONLY]],
+    ["v1.4.2", [TEMPLATE]],
+  ],
+  { ["a".repeat(40)]: "v1.4.0", ["b".repeat(40)]: "v1.3.0" },
+);
 const OLD_PIN = "b".repeat(40);
 
 // The real inventory is what the schema and identity tests read. Every audit below runs against
@@ -25,7 +88,12 @@ const fleet = {
   repositories: inventory.repositories.map((entry) =>
     entry.consumerContract === false
       ? entry
-      : { ...entry, standardsRef: LATEST.commit },
+      : {
+          ...entry,
+          standardsRef: LATEST.commit,
+          renovatePresetVersion:
+            entry.renovatePresetVersion && `v${LATEST.version}`,
+        },
   ),
 };
 const schema = JSON.parse(readFileSync("contracts/fleet.schema.json", "utf8"));
@@ -82,7 +150,7 @@ function healthySnapshots() {
       id: fleet.upstream.repositoryId,
       fullName: fleet.upstream.repository,
     },
-    standardsRelease: structuredClone(LATEST),
+    standardsRelease: { ...LATEST },
     repositories,
   };
 }
@@ -661,23 +729,312 @@ test("an unresolved latest release is one fleet-level note, and no member fails 
   assert.match(report, /Latest repository-standards release: unavailable/);
   assert.match(
     report,
-    /Note: latest repository-standards release was not determined \(\.release-please-manifest\.json: ENOENT\); delivery-contract and consumer-pin lag are unverified/,
+    /Note: latest repository-standards release was not determined \(\.release-please-manifest\.json: ENOENT\); delivery-contract, consumer-pin and Renovate preset lag are unverified/,
   );
 });
 
-test("an unresolvable release tag leaves pin lag unverified while template lag still grades", () => {
+test("an unresolvable release tag leaves every lag kind unverified, once", () => {
   const snapshots = healthySnapshots();
-  snapshots.standardsRelease = { version: "1.4.0" };
+  snapshots.standardsRelease = { ...LATEST, commit: undefined };
   snapshots.repositories["minipuft/gemini-prompts"].caller =
     `uses: minipuft/repository-standards/.github/workflows/consumer-contract.yml@${OLD_PIN}\n`;
   snapshots.repositories["minipuft/cloudySky"].delivery.templateVersion =
     "1.3.0";
-  const audit = auditFleet(fleet, snapshots);
-  const report = formatFleetReport(audit);
+  const report = formatFleetReport(auditFleet(fleet, snapshots));
   assert.match(
     report,
-    /Note: release tag v1\.4\.0 is not resolvable in this checkout; consumer-pin lag is unverified/,
+    /Note: release tag v1\.4\.0 is not resolvable in this checkout; delivery-contract, consumer-pin and Renovate preset lag are unverified/,
   );
   assert.doesNotMatch(report, /consumer-contract caller pins/);
-  assert.match(report, /delivery contract template is 1\.3\.0/);
+  assert.doesNotMatch(report, /delivery contract template is/);
+});
+
+// ------------------------------------- owner ruling Q1: a release that changes nothing used is not lag
+
+// v1.3.0 and v1.4.0 change only the audit and the README, which no member runs. v1.2.0 is the last
+// release that changed anything a member consumes: the template, the verifier the reusable workflow
+// runs, and the downstream Renovate preset.
+const C_PIN = "c".repeat(40);
+const AUDIT_ONLY_RELEASES = releaseFixture(
+  "1.4.0",
+  [
+    ["v1.1.0", [TEMPLATE, WORKFLOW, PRESET]],
+    [
+      "v1.2.0",
+      [
+        "templates/delivery-contract/.github/workflows/pr-conventions.yml",
+        "actions/verify-consumer/verify-consumer.mjs",
+        PRESET,
+      ],
+    ],
+    ["v1.3.0", [AUDIT_ONLY]],
+    ["v1.4.0", [AUDIT_ONLY, "README.md"]],
+  ],
+  {
+    ["a".repeat(40)]: "v1.4.0",
+    ["b".repeat(40)]: "v1.3.0",
+    [C_PIN]: "v1.1.0",
+  },
+);
+
+function auditOnlySnapshots() {
+  const snapshots = healthySnapshots();
+  snapshots.standardsRelease = AUDIT_ONLY_RELEASES;
+  return snapshots;
+}
+
+function resultFor(audit, repository) {
+  return audit.results.find((entry) => entry.repository === repository);
+}
+
+// A fleet whose gemini-prompts entry declares `pin` as both its standards ref and its preset, so
+// the fleet.json agreement checks stay quiet and only lag is measured.
+function fleetPinning(pin, preset = `v${LATEST.version}`) {
+  return {
+    ...fleet,
+    repositories: fleet.repositories.map((entry) =>
+      entry.repository === "minipuft/gemini-prompts"
+        ? { ...entry, standardsRef: pin, renovatePresetVersion: preset }
+        : entry,
+    ),
+  };
+}
+
+function pinCaller(pin) {
+  return (
+    `uses: minipuft/repository-standards/.github/workflows/consumer-contract.yml@${pin}\n` +
+    `with:\n  standards-ref: ${pin}\n`
+  );
+}
+
+test("a template unchanged since the installed version is not lag, however many releases followed", () => {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/cloudySky"].delivery.templateVersion =
+    "1.2.0";
+  const audit = auditFleet(fleet, snapshots);
+  const cloudySky = resultFor(audit, "minipuft/cloudySky");
+  assert.deepEqual(cloudySky.violations, []);
+  assert.doesNotMatch(cloudySky.notes.join("\n"), /template/);
+  assert.equal(audit.violationCount, 0, formatFleetReport(audit));
+});
+
+test("a template changed in a later release is drift naming that release", () => {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/cloudySky"].delivery.templateVersion =
+    "1.1.0";
+  const audit = auditFleet(fleet, snapshots);
+  assert.equal(audit.violationCount, 1);
+  assert.match(
+    formatFleetReport(audit),
+    /Drift: delivery contract template is 1\.1\.0, latest repository-standards release is 1\.4\.0 \(3 minor versions behind\); the delivery-contract template last changed in v1\.2\.0, 3 releases behind — adopt it with `delivery-contract update`/,
+  );
+});
+
+test("a consumer pin whose workflow and verifier are unchanged since is not lag", () => {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/gemini-prompts"].caller = pinCaller(OLD_PIN);
+  const audit = auditFleet(fleetPinning(OLD_PIN), snapshots);
+  const gemini = resultFor(audit, "minipuft/gemini-prompts");
+  assert.deepEqual(gemini.violations, []);
+  assert.deepEqual(gemini.notes, []);
+});
+
+test("a consumer pin behind a release that changed the verifier is drift naming that release", () => {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/gemini-prompts"].caller = pinCaller(C_PIN);
+  const audit = auditFleet(fleetPinning(C_PIN), snapshots);
+  assert.deepEqual(resultFor(audit, "minipuft/gemini-prompts").violations, [
+    "consumer-contract caller pins repository-standards at uses ccccccc (v1.1.0), standards-ref ccccccc (v1.1.0), latest release is v1.4.0 (aaaaaaa); the consumer-contract workflow or its verifier last changed in v1.2.0",
+  ]);
+});
+
+test("the consumer surface is what the reusable workflow executes", () => {
+  assert.deepEqual(RELEASE_SURFACES.consumer.paths, [
+    ".github/workflows/consumer-contract.yml",
+    "actions/verify-consumer",
+    "lib/consumer-contract-validator.mjs",
+    "profiles.json",
+    "contracts/downstream-contract.schema.json",
+  ]);
+  const workflow = readFileSync(WORKFLOW, "utf8");
+  assert.match(workflow, /uses: \.\/standards\/actions\/verify-consumer/);
+  const verifier = readFileSync(
+    "actions/verify-consumer/verify-consumer.mjs",
+    "utf8",
+  );
+  assert.match(verifier, /lib\/consumer-contract-validator\.mjs/);
+  const validator = readFileSync("lib/consumer-contract-validator.mjs", "utf8");
+  assert.match(validator, /contracts\/downstream-contract\.schema\.json/);
+  assert.match(validator, /profiles\.json/);
+});
+
+function presetSnapshots(preset) {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/gemini-prompts"].renovate = {
+    extends: [
+      `github>minipuft/repository-standards//renovate/downstream.json#${preset}`,
+    ],
+  };
+  return snapshots;
+}
+
+test("a Renovate preset pinned before the preset last changed is drift", () => {
+  const audit = auditFleet(
+    fleetPinning(LATEST.commit, "v1.1.0"),
+    presetSnapshots("v1.1.0"),
+  );
+  assert.deepEqual(resultFor(audit, "minipuft/gemini-prompts").violations, [
+    "Renovate extends repository-standards//renovate/downstream.json at v1.1.0, latest release is v1.4.0; the downstream Renovate preset last changed in v1.2.0 — extend #v1.4.0",
+  ]);
+});
+
+test("an old Renovate preset pin whose preset is identical since is not lag", () => {
+  for (const preset of ["v1.2.0", "v1.3.0"]) {
+    const audit = auditFleet(
+      fleetPinning(LATEST.commit, preset),
+      presetSnapshots(preset),
+    );
+    const gemini = resultFor(audit, "minipuft/gemini-prompts");
+    assert.deepEqual(gemini.violations, [], preset);
+    assert.deepEqual(gemini.notes, [], preset);
+  }
+});
+
+test("a preset pin that disagrees with fleet.json is drift even when it is not lag", () => {
+  const audit = auditFleet(fleet, presetSnapshots("v1.2.0"));
+  assert.deepEqual(resultFor(audit, "minipuft/gemini-prompts").violations, [
+    "Renovate preset is v1.2.0, fleet.json declares v1.4.0",
+  ]);
+});
+
+test("every member's preset pin is graded, and one with no Renovate config contributes nothing", () => {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/t3code"].renovate = {
+    extends: [
+      "config:recommended",
+      "github>minipuft/repository-standards//renovate/downstream.json#v1.1.0",
+    ],
+  };
+  const audit = auditFleet(fleet, snapshots);
+  const t3code = resultFor(audit, "minipuft/t3code");
+  assert.equal(t3code.violations.length, 1);
+  assert.match(t3code.violations[0], /downstream\.json at v1\.1\.0/);
+  assert.match(
+    t3code.notes.join("\n"),
+    /fleet\.json declares no renovatePresetVersion/,
+  );
+  // claude-prompts-mcp carries no Renovate config in the fixture.
+  assert.deepEqual(
+    resultFor(audit, "minipuft/claude-prompts-mcp").violations,
+    [],
+  );
+});
+
+test("an unreadable Renovate config is an unverified note, not lag", () => {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/cloudySky"].renovateUnexplained =
+    "renovate.json: 403 Forbidden";
+  const audit = auditFleet(fleet, snapshots);
+  assert.equal(audit.violationCount, 0);
+  assert.match(
+    formatFleetReport(audit),
+    /Note: Renovate config could not be read \(renovate\.json: 403 Forbidden\); preset lag is unverified/,
+  );
+});
+
+test("a version or pin missing from this checkout's tags is an unverified note, never drift", () => {
+  const snapshots = auditOnlySnapshots();
+  snapshots.repositories["minipuft/cloudySky"].delivery.templateVersion =
+    "1.1.5";
+  const unknown = "d".repeat(40);
+  snapshots.repositories["minipuft/gemini-prompts"].caller = pinCaller(unknown);
+  snapshots.repositories["minipuft/gemini-prompts"].renovate = {
+    extends: [
+      "github>minipuft/repository-standards//renovate/downstream.json#v0.5.0",
+    ],
+  };
+  const audit = auditFleet(fleetPinning(unknown, "v0.5.0"), snapshots);
+  const report = formatFleetReport(audit);
+  assert.equal(audit.violationCount, 0, report);
+  assert.match(
+    report,
+    /Note: delivery contract template 1\.1\.5 has no v1\.1\.5 tag in this checkout; whether the template changed since is unverified/,
+  );
+  assert.match(
+    report,
+    /Note: uses ddddddd \(not a release tag\) could not be compared with v1\.4\.0 in this checkout; whether the consumer-contract workflow or its verifier changed since is unverified/,
+  );
+  assert.match(
+    report,
+    /Note: preset v0\.5\.0 could not be compared with v1\.4\.0 in this checkout/,
+  );
+});
+
+// The fixtures above answer `surfaceChanged` from a declared history. This one drives the real
+// implementation, `git diff --quiet` over local tags, in a scratch repository.
+test("the checkout's release reader compares surfaces between real tags", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fleet-release-"));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+  );
+  const git = (...args) =>
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+      ].concat(args),
+      { cwd: dir, env, encoding: "utf8" },
+    ).trim();
+  const write = (path, text) => {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  };
+  const release = (version, annotated) => {
+    write(".release-please-manifest.json", JSON.stringify({ ".": version }));
+    git("add", "-A");
+    git("commit", "-q", "-m", `release ${version}`);
+    if (annotated) git("tag", "-a", `v${version}`, "-m", `v${version}`);
+    else git("tag", `v${version}`);
+  };
+  git("init", "-q");
+  write(TEMPLATE, "one");
+  release("1.0.0");
+  write(AUDIT_ONLY, "audit");
+  release("1.1.0");
+  write(TEMPLATE, "two");
+  release("1.2.0", true);
+  const head = git("rev-parse", "HEAD");
+
+  const observed = latestStandardsRelease(dir);
+  assert.equal(observed.version, "1.2.0");
+  assert.equal(observed.commit, head, "an annotated tag peels to its commit");
+  assert.deepEqual(observed.tags.map(({ tag }) => tag).sort(), [
+    "v1.0.0",
+    "v1.1.0",
+    "v1.2.0",
+  ]);
+  const template = RELEASE_SURFACES.template.paths;
+  assert.equal(observed.surfaceChanged("v1.0.0", "v1.1.0", template), false);
+  assert.equal(observed.surfaceChanged("v1.1.0", "v1.2.0", template), true);
+  assert.equal(observed.surfaceChanged("v0.1.0", "v1.2.0", template), null);
+  // A pin is member-written text. Spelled as an option it must stay a ref, not write a file.
+  const injected = join(dir, "injected");
+  assert.equal(
+    observed.surfaceChanged(`--output=${injected}`, "v1.2.0", template),
+    null,
+  );
+  assert.equal(existsSync(injected), false);
+
+  const snapshots = healthySnapshots();
+  snapshots.standardsRelease = observed;
+  snapshots.repositories["minipuft/cloudySky"].delivery.templateVersion =
+    "1.0.0";
+  const audit = auditFleet(fleet, snapshots);
+  assert.match(
+    resultFor(audit, "minipuft/cloudySky").violations.join("\n"),
+    /template last changed in v1\.2\.0, 2 releases behind/,
+  );
 });

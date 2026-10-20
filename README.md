@@ -130,6 +130,20 @@ node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" update
 node "$REPOSITORY_STANDARDS_DIR/bin/delivery-contract.cjs" check
 ```
 
+Seeded files (the PR template, `commitlint.config.mjs`, the ADR template) are the repository's own
+once written, so `update` never overwrites them and `check` never fails on them. Both commands
+print one advisory line per seeded file whose bytes differ from the template at the installed
+version, so a rule the template retired (a PR template still asking for an `Initiative:` trailer)
+is found without reading the file:
+
+```text
+seeded  .github/pull_request_template.md differs from the template; review it (template: …/templates/delivery-contract/.github/pull_request_template.md)
+```
+
+A rendered seeded file (`commitlint.config.mjs`) is compared against its render from the answers
+in `.delivery-contract.json`, so the repository's own `scopes` are not a difference. The line
+changes no exit code; a seeded file the repository deleted is not reported.
+
 Commit right after `install` — it writes `.delivery-contract.json` alongside the scaffolding, and
 an uncommitted managed file is exactly what `update` later refuses to overwrite.
 
@@ -152,9 +166,13 @@ will write. The body and squash-commit checks each run a positive control first,
 `scripts/pr-check.mjs` runs the same steps locally before `gh pr create`.
 
 One step warns and never fails: `scripts/warn-contract-lag.mjs` compares `.delivery-contract.json`
-`templateVersion` with the latest published release of this repository and, when the contract is
-behind, annotates the PR with both versions and the remedy (`delivery-contract update` from a
-checkout at that release). On 2026-10-20 six fleet repositories sat at 1.7.0 under a 1.10.1
+`templateVersion` with the latest published release of this repository and annotates the PR with
+both versions and the remedy (`delivery-contract update` from a checkout at that release) only when
+the contract is behind AND the `templates/delivery-contract` tree differs between the installed tag
+and the latest tag (owner ruling Q1, the same rule the fleet audit applies): a release that touched
+only the audit, CI, docs or the CLI is silent. It makes at most three GitHub API calls (latest
+release, then the template tree at each tag) and prints "not compared" when the installed tag does
+not exist. On 2026-10-20 six fleet repositories sat at 1.7.0 under a 1.10.1
 release and nothing reported it. The step is a warning because a new release changes nothing a
 PR controls: failing would turn every open downstream PR red on release day, and the fix is its
 own adoption PR. It exits 0 on a network or API error too, and runs with `continue-on-error`.
@@ -324,13 +342,29 @@ them all. The latest release is read from this checkout — the version from
 can turn a flaky network into a false failure. The workflow checks out full history for the tags,
 and also runs when a release is published.
 
-| Observed                                                                                      | Classification                                                       |
-| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `.delivery-contract.json` `templateVersion` older than the latest release                     | **Drift** — named with both versions and how far behind              |
-| Consumer caller's `consumer-contract.yml@` pin or `standards-ref` not the latest tag's commit | **Drift** — named with the pin, the release it points at, and latest |
-| Caller pin differs from `fleet.json` `standardsRef`                                           | **Drift** — the existing pin checks                                  |
-| A member on, or ahead of, the latest release                                                  | No drift                                                             |
-| Contract unreadable, no `templateVersion`, release or tag not resolvable in the checkout      | Note — the lag is reported unverified, never failed                  |
+**A release that does not change what a member uses is not lag.** Older is not enough: a member is
+behind only when the files it consumes differ between what it pins and the latest release tag
+(`git diff` between the two local tags). A release that changes only the audit, CI, docs or the
+CLI flags nobody. Each kind of pin is compared over its own files:
+
+| Pin                                                                                     | Files compared                                                                                                                                                               |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.delivery-contract.json` `templateVersion`                                             | `templates/delivery-contract/**`                                                                                                                                             |
+| Consumer caller's `consumer-contract.yml@` pin and `standards-ref`                      | `.github/workflows/consumer-contract.yml`, `actions/verify-consumer/**`, `lib/consumer-contract-validator.mjs`, `profiles.json`, `contracts/downstream-contract.schema.json` |
+| `renovate.json` or `.github/renovate.json` `extends` of `…//renovate/downstream.json#v` | `renovate/downstream.json`                                                                                                                                                   |
+
+The consumer files are what the reusable workflow executes. `package.json` and
+`package-lock.json`, which its verifier also installs from, are left out: Release Please bumps
+`package.json` in every release, so counting them would flag every member on every release again.
+
+| Observed                                                                                                                   | Classification                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| A pin older than the latest release, and its files changed since                                                           | **Drift** — named with the pin, the latest release, the release that last changed the files, and the remedy |
+| A pin older than the latest release, and its files unchanged since                                                         | No drift                                                                                                    |
+| Caller pin differs from `fleet.json` `standardsRef`                                                                        | **Drift** — the existing pin checks                                                                         |
+| Renovate preset pin differs from `fleet.json` `renovatePresetVersion`                                                      | **Drift** — declaration and member must agree                                                               |
+| A member on, or ahead of, the latest release, or with no Renovate config extending the preset                              | No drift                                                                                                    |
+| Contract or Renovate config unreadable, no `templateVersion`, a pinned version or the latest tag missing from the checkout | Note — the lag is reported unverified, never failed                                                         |
 
 ## Versioning and rollback
 
