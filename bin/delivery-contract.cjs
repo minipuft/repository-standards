@@ -10,8 +10,11 @@
  *             on a managed file (the CI workflow, the commit-msg hook) re-renders it from the
  *             consumer's own answers on every `install`/`update`/`check`, so a consumer's answers
  *             — not just the template — decide what "undrifted" means for that file.
- *   seeded  → written once if absent, then the consumer's. `update` and `check` never touch or
- *             judge it. `render: true` substitutes `{{answer}}` placeholders on that one write.
+ *   seeded  → written once if absent, then the consumer's. `update` and `check` never write it
+ *             and never fail on it; they print one advisory line for a seeded file whose bytes
+ *             differ from the template at the installed version (rendered with the consumer's own
+ *             answers when `render: true`). `render: true` substitutes `{{answer}}` placeholders
+ *             on the one write that seeds it.
  *
  * The consumer's answers live in `.delivery-contract.json`, validated against
  * contracts/delivery-contract.schema.json on every subcommand.
@@ -385,6 +388,40 @@ function driftedManaged(
   });
 }
 
+/**
+ * Seeded files that exist in the consumer and differ from what the template renders for this
+ * consumer's `answers`. Advisory only: a seeded file is the consumer's once written, so a
+ * difference is a prompt to review (the template may have changed a rule the file restates), not
+ * drift. A missing seeded file is not reported — `install` seeds it, and deleting one is a choice.
+ * A rendered file compares against its render, so a consumer's own `scopes` answer is not a
+ * difference. `omit` cannot name a seeded path (`validateOmit`), so there is nothing to exclude.
+ */
+function differingSeeded(repoRoot, templateDir, manifest, answers) {
+  return manifest.files.filter((entry) => {
+    if (entry.class !== "seeded") return false;
+    const target = path.join(repoRoot, entry.path);
+    if (!fs.existsSync(target)) return false;
+    return !fs
+      .readFileSync(target)
+      .equals(renderedBytes(templateDir, entry, answers));
+  });
+}
+
+function reportDifferingSeeded(repoRoot, templateDir, manifest, answers) {
+  for (const entry of differingSeeded(
+    repoRoot,
+    templateDir,
+    manifest,
+    answers,
+  )) {
+    const rendered = entry.render ? ", rendered with your answers" : "";
+    console.log(
+      `seeded  ${entry.path} differs from the template; review it ` +
+        `(template: ${path.join(templateDir, entry.path)}${rendered})`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------- git
 
 function git(repoRoot, args) {
@@ -567,6 +604,7 @@ function commandUpdate(repoRoot, templateDir, manifest, document) {
   }
   for (const relPath of omit) console.log(`omit   ${relPath}`);
   const versionChanged = writeAnswersFile(repoRoot, document.answers, omit);
+  reportDifferingSeeded(repoRoot, templateDir, manifest, answers);
   if (drifted.length === 0) {
     console.log(
       versionChanged
@@ -622,6 +660,7 @@ function commandCheck(repoRoot, templateDir, manifest, document) {
     answers,
     omitSet,
   );
+  reportDifferingSeeded(repoRoot, templateDir, manifest, answers);
   if (drifted.length === 0) {
     console.log("clean");
     return 0;
