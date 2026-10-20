@@ -5,6 +5,13 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.11.0](https://github.com/minipuft/repository-standards/compare/v1.10.1...v1.11.0) (2026-10-20)
+
+
+### Added
+
+* **audit:** the fleet audit fails on members behind the latest release ([#41](https://github.com/minipuft/repository-standards/issues/41)) ([b6f8b0d](https://github.com/minipuft/repository-standards/commit/b6f8b0ddb2c023583f184c774ca562d1371c7c48))
+
 ## [1.10.1](https://github.com/minipuft/repository-standards/compare/v1.10.0...v1.10.1) (2026-10-20)
 
 
