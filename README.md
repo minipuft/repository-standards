@@ -142,6 +142,7 @@ an uncommitted managed file is exactly what `update` later refuses to overwrite.
 | `scripts/pr-body.mjs`                            |                                         |
 | `scripts/validate-pr-body.mjs`                   |                                         |
 | `scripts/validate-squash-message.mjs`            |                                         |
+| `scripts/warn-contract-lag.mjs`                  |                                         |
 | `scripts/vendor/conventional-commits-parser.cjs` |                                         |
 | `scripts/adr.mjs`                                |                                         |
 
@@ -149,6 +150,17 @@ The `PR Conventions` workflow checks the PR body against the template, lints the
 repo's commitlint config, and checks that release-please can parse the commit the squash merge
 will write. The body and squash-commit checks each run a positive control first, and
 `scripts/pr-check.mjs` runs the same steps locally before `gh pr create`.
+
+One step warns and never fails: `scripts/warn-contract-lag.mjs` compares `.delivery-contract.json`
+`templateVersion` with the latest published release of this repository and, when the contract is
+behind, annotates the PR with both versions and the remedy (`delivery-contract update` from a
+checkout at that release). On 2026-10-20 six fleet repositories sat at 1.7.0 under a 1.10.1
+release and nothing reported it. The step is a warning because a new release changes nothing a
+PR controls: failing would turn every open downstream PR red on release day, and the fix is its
+own adoption PR. It exits 0 on a network or API error too, and runs with `continue-on-error`.
+`scripts/pr-check.mjs` lists it in `ADVISORY_CI_STEPS` rather than mirroring it, and a test fails
+if any unmirrored step is missing from that list or could fail the job. The fleet audit is what
+fails on the lag (below).
 
 The squash-commit check exists because release-please leaves out any commit its parser rejects,
 and says so only in a debug log: no changelog line, no version bump, no BREAKING CHANGE note. The
@@ -303,6 +315,22 @@ check is **required**; the check-runs on `main` answer whether it **passed**. Bo
 | Outcome probe did not run                                                                | Note — an unverified rule announces itself rather than passing silently                           |
 
 `success`, `neutral`, and `skipped` are treated as passing.
+
+It also measures each member against the latest repository-standards release, because falling
+behind failed nothing: on 2026-10-20 six members sat at delivery-contract template 1.7.0 and three
+consumer callers pinned v1.0.0 while this repository had released 1.10.1, and the audit passed
+them all. The latest release is read from this checkout — the version from
+`.release-please-manifest.json`, its commit from the local `v<version>` tag — so no API request
+can turn a flaky network into a false failure. The workflow checks out full history for the tags,
+and also runs when a release is published.
+
+| Observed                                                                                      | Classification                                                       |
+| --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `.delivery-contract.json` `templateVersion` older than the latest release                     | **Drift** — named with both versions and how far behind              |
+| Consumer caller's `consumer-contract.yml@` pin or `standards-ref` not the latest tag's commit | **Drift** — named with the pin, the release it points at, and latest |
+| Caller pin differs from `fleet.json` `standardsRef`                                           | **Drift** — the existing pin checks                                  |
+| A member on, or ahead of, the latest release                                                  | No drift                                                             |
+| Contract unreadable, no `templateVersion`, release or tag not resolvable in the checkout      | Note — the lag is reported unverified, never failed                  |
 
 ## Versioning and rollback
 

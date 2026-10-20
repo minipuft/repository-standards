@@ -45,6 +45,11 @@
       "mode": "0755"
     },
     {
+      "path": "scripts/warn-contract-lag.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
       "path": "scripts/vendor/conventional-commits-parser.cjs",
       "class": "managed"
     },
