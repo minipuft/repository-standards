@@ -5,6 +5,13 @@ The 1.2.1 and 1.3.0 entries below were reconstructed from their tag ranges on 20
 both shipped as a `package.json` bump with no changelog entry, which is the drift the
 automation exists to prevent.
 
+## [1.14.0](https://github.com/minipuft/repository-standards/compare/v1.13.0...v1.14.0) (2026-10-20)
+
+
+### Added
+
+* **delivery-contract:** plan rows are parsed and stamp-checked by one managed module ([#50](https://github.com/minipuft/repository-standards/issues/50)) ([aa4a33e](https://github.com/minipuft/repository-standards/commit/aa4a33e779f8c98c9d1b3423405164e786ddbe78))
+
 ## [1.13.0](https://github.com/minipuft/repository-standards/compare/v1.12.0...v1.13.0) (2026-10-20)
 
 
