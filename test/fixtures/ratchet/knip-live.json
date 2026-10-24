@@ -1,0 +1,187 @@
+{
+  "issues": [
+    {
+      "file": "tests/manual/test-execution-modes.ts",
+      "binaries": [],
+      "catalog": [],
+      "catalogReferences": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "duplicates": [],
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "tests/manual/test-execution-modes.ts"
+        }
+      ],
+      "namespaceMembers": [],
+      "optionalPeerDependencies": [],
+      "types": [],
+      "unlisted": [],
+      "unresolved": []
+    },
+    {
+      "file": "tests/manual/test-versioning-service.ts",
+      "binaries": [],
+      "catalog": [],
+      "catalogReferences": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "duplicates": [],
+      "enumMembers": [],
+      "exports": [],
+      "files": [
+        {
+          "name": "tests/manual/test-versioning-service.ts"
+        }
+      ],
+      "namespaceMembers": [],
+      "optionalPeerDependencies": [],
+      "types": [],
+      "unlisted": [],
+      "unresolved": []
+    },
+    {
+      "file": "package.json",
+      "binaries": [
+        {
+          "name": "pip"
+        },
+        {
+          "name": "ruff"
+        },
+        {
+          "name": "pyrefly"
+        }
+      ],
+      "catalog": [],
+      "catalogReferences": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "duplicates": [],
+      "enumMembers": [],
+      "exports": [],
+      "files": [],
+      "namespaceMembers": [],
+      "optionalPeerDependencies": [],
+      "types": [],
+      "unlisted": [],
+      "unresolved": []
+    },
+    {
+      "file": "tests/unit/execution/pipeline/session-stage.test.ts",
+      "binaries": [],
+      "catalog": [],
+      "catalogReferences": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "duplicates": [],
+      "enumMembers": [],
+      "exports": [],
+      "files": [],
+      "namespaceMembers": [],
+      "optionalPeerDependencies": [],
+      "types": [],
+      "unlisted": [],
+      "unresolved": [
+        {
+          "name": "../../../../src/modules/chains/types.js",
+          "line": 7,
+          "col": 56,
+          "pos": 465
+        }
+      ]
+    },
+    {
+      "file": "src/mcp/contracts/schemas/types.ts",
+      "binaries": [],
+      "catalog": [],
+      "catalogReferences": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "duplicates": [],
+      "enumMembers": [],
+      "exports": [
+        {
+          "name": "parameterStatusSchema",
+          "line": 12,
+          "col": 14,
+          "pos": 431
+        },
+        {
+          "name": "compatibilitySchema",
+          "line": 20,
+          "col": 14,
+          "pos": 563
+        },
+        {
+          "name": "parameterSchema",
+          "line": 22,
+          "col": 14,
+          "pos": 646
+        },
+        {
+          "name": "commandDescriptorSchema",
+          "line": 48,
+          "col": 14,
+          "pos": 1969
+        },
+        {
+          "name": "toolDescriptionSchema",
+          "line": 60,
+          "col": 14,
+          "pos": 2371
+        },
+        {
+          "name": "validateToolContract",
+          "line": 80,
+          "col": 17,
+          "pos": 3156
+        }
+      ],
+      "files": [],
+      "namespaceMembers": [],
+      "optionalPeerDependencies": [],
+      "types": [],
+      "unlisted": [],
+      "unresolved": []
+    },
+    {
+      "file": "src/infra/database/table-contracts.ts",
+      "binaries": [],
+      "catalog": [],
+      "catalogReferences": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "duplicates": [],
+      "enumMembers": [],
+      "exports": [],
+      "files": [],
+      "namespaceMembers": [],
+      "optionalPeerDependencies": [],
+      "types": [
+        {
+          "name": "Posture",
+          "line": 39,
+          "col": 13,
+          "pos": 2394
+        },
+        {
+          "name": "ScopeKind",
+          "line": 42,
+          "col": 13,
+          "pos": 2569
+        },
+        {
+          "name": "AcceptedException",
+          "line": 67,
+          "col": 18,
+          "pos": 3648
+        }
+      ],
+      "unlisted": [],
+      "unresolved": []
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// Stand-in for a tool killed by a signal: no exit code, `status` is null for the parent.
+process.kill(process.pid, "SIGKILL");

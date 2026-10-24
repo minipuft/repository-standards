@@ -1,0 +1,16 @@
+tests/e2e/helpers/http-mcp-client.ts(495,36): error TS2339: Property 'message' does not exist on type '{}'.
+tests/e2e/helpers/http-mcp-client.ts(539,36): error TS2339: Property 'message' does not exist on type '{}'.
+tests/e2e/plugin-validation.test.ts(41,17): error TS2554: Expected 2-3 arguments, but got 1.
+tests/e2e/plugin-validation.test.ts(45,14): error TS2554: Expected 2-3 arguments, but got 1.
+tests/e2e/plugin-validation.test.ts(51,12): error TS2554: Expected 2-3 arguments, but got 1.
+tests/e2e/shell-verify-e2e.test.ts(185,26): error TS2339: Property 'shellVerify' does not exist on type 'SymbolicOperator'.
+  Property 'shellVerify' does not exist on type 'ChainOperator'.
+tests/e2e/shell-verify-e2e.test.ts(189,30): error TS2339: Property 'shellVerify' does not exist on type 'SymbolicOperator'.
+  Property 'shellVerify' does not exist on type 'ChainOperator'.
+tests/e2e/shell-verify-e2e.test.ts(202,26): error TS2339: Property 'shellVerify' does not exist on type 'SymbolicOperator'.
+  Property 'shellVerify' does not exist on type 'ChainOperator'.
+tests/e2e/shell-verify-e2e.test.ts(203,26): error TS2339: Property 'shellVerify' does not exist on type 'SymbolicOperator'.
+  Property 'shellVerify' does not exist on type 'ChainOperator'.
+tests/e2e/shell-verify-e2e.test.ts(204,26): error TS2339: Property 'shellVerify' does not exist on type 'SymbolicOperator'.
+  Property 'shellVerify' does not exist on type 'ChainOperator'.
+tests/helpers/test-helpers.ts(20,10): error TS2339: Property 'logs' does not exist on type 'MockLogger'.

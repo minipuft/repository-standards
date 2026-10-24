@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+// Stand-in for a tool that died: two diagnostic lines on stderr, exit 3.
+const fs = process.getBuiltinModule("node:fs");
+fs.writeSync(
+  2,
+  "FATAL: fake tool crashed: out of memory\n  at heap (fake.js:1:1)\n",
+);
+process.exitCode = 3;
