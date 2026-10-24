@@ -44,6 +44,11 @@
       "mode": "0755"
     },
     {
+      "path": "scripts/ratchet.mjs",
+      "class": "managed",
+      "mode": "0755"
+    },
+    {
       "path": "scripts/validate-pr-body.mjs",
       "class": "managed",
       "mode": "0755"

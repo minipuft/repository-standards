@@ -1,0 +1,51 @@
+{
+  "issues": [
+    {
+      "file": "lib.js",
+      "binaries": [],
+      "catalog": [],
+      "catalogReferences": [],
+      "dependencies": [],
+      "devDependencies": [],
+      "duplicates": [
+        [
+          {
+            "name": "a",
+            "line": 1,
+            "col": 14,
+            "pos": 13
+          },
+          {
+            "name": "default",
+            "line": 2,
+            "col": 16,
+            "pos": 35
+          }
+        ]
+      ],
+      "enumMembers": [],
+      "exports": [
+        {
+          "name": "unused",
+          "line": 3,
+          "col": 14,
+          "pos": 51
+        }
+      ],
+      "files": [],
+      "namespaceMembers": [],
+      "optionalPeerDependencies": [],
+      "types": [],
+      "unlisted": [],
+      "unresolved": [],
+      "futureCategory": [
+        {
+          "name": "x",
+          "line": 1,
+          "col": 1,
+          "pos": 0
+        }
+      ]
+    }
+  ]
+}

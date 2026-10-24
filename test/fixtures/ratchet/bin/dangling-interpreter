@@ -1,0 +1,2 @@
+#!/nonexistent/interpreter
+// The file exists and is executable, but its interpreter does not: spawn fails with ENOENT.

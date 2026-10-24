@@ -1,0 +1,63 @@
+[
+  {
+    "filePath": "src/shared/utils/process.ts",
+    "messages": [
+      {
+        "ruleId": "@typescript-eslint/no-non-null-assertion",
+        "severity": 1,
+        "message": "Forbidden non-null assertion.",
+        "line": 305,
+        "column": 28,
+        "messageId": "noNonNull",
+        "endLine": 305,
+        "endColumn": 45
+      },
+      {
+        "ruleId": "@typescript-eslint/no-unnecessary-condition",
+        "severity": 2,
+        "message": "Unnecessary optional chain on a non-nullish value.",
+        "line": 579,
+        "column": 16,
+        "messageId": "neverOptionalChain",
+        "endLine": 579,
+        "endColumn": 18
+      },
+      {
+        "ruleId": "@typescript-eslint/no-unnecessary-condition",
+        "severity": 2,
+        "message": "Unnecessary optional chain on a non-nullish value.",
+        "line": 587,
+        "column": 16,
+        "messageId": "neverOptionalChain",
+        "endLine": 587,
+        "endColumn": 18
+      },
+      {
+        "ruleId": "@typescript-eslint/no-unnecessary-condition",
+        "severity": 2,
+        "message": "Unnecessary optional chain on a non-nullish value.",
+        "line": 601,
+        "column": 15,
+        "messageId": "neverOptionalChain",
+        "endLine": 601,
+        "endColumn": 17
+      },
+      {
+        "ruleId": "@typescript-eslint/strict-boolean-expressions",
+        "severity": 2,
+        "message": "Unexpected object value in conditional. The condition is always true.",
+        "line": 609,
+        "column": 48,
+        "messageId": "conditionErrorObject",
+        "endLine": 609,
+        "endColumn": 58
+      }
+    ],
+    "suppressedMessages": [],
+    "errorCount": 6,
+    "fatalErrorCount": 0,
+    "warningCount": 1,
+    "fixableErrorCount": 0,
+    "fixableWarningCount": 0
+  }
+]

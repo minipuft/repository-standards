@@ -1,0 +1,16 @@
+#!/usr/bin/env node
+// Stand-in for eslint, knip or tsc: replays a captured report and exits with a chosen code.
+//   FAKE_FIXTURE  file to replay (unset: emit nothing)
+//   FAKE_EXIT     exit code (default 0)
+// An `--output-file <path>` argument (eslint's report channel) receives the fixture; without
+// one it goes to stdout, where knip and tsc print theirs.
+const fs = process.getBuiltinModule("node:fs");
+const argv = process.argv.slice(2);
+const outputAt = argv.indexOf("--output-file");
+const fixture = process.env.FAKE_FIXTURE;
+if (fixture) {
+  const bytes = fs.readFileSync(fixture);
+  if (outputAt >= 0) fs.writeFileSync(argv[outputAt + 1], bytes);
+  else fs.writeSync(1, bytes);
+}
+process.exitCode = Number(process.env.FAKE_EXIT ?? 0);
